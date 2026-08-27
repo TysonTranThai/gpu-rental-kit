@@ -16,6 +16,11 @@
   <img src="https://img.shields.io/badge/NVIDIA-CUDA-76B900.svg?logo=nvidia&logoColor=white" alt="NVIDIA CUDA">
 </p>
 
+> [!IMPORTANT]
+> **BETA — Windows client support is NOT yet tested on real Windows hardware.**
+> Validated statically only; runtime testing pending.
+> macOS/Linux server workflows are stable ([v1.0.1](https://github.com/TysonTranThai/gpu-rental-kit/releases/tag/v1.0.1)).
+
 > **The simple idea:** the rented GPU server runs the model. Your own computer—Mac, Windows PC, or Linux machine—connects to that server. **Your personal computer does not need an NVIDIA GPU.**
 
 ## What is gpu-rental-kit?
