@@ -1,0 +1,6 @@
+rootfs / rootfs rw 0 0
+/dev/vda1 / ext4 rw,relatime 0 0
+proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0
+sysfs /sys sysfs rw,nosuid,nodev,noexec,relatime 0 0
+devpts /dev/pts devpts rw,nosuid,noexec,relatime,gid=5,mode=620,ptmxmode=000 0 0
+tmpfs /dev/shm tmpfs rw,nosuid,nodev 0 0

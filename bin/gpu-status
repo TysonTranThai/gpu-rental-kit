@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# =============================================================================
+# gpu-status — Show comprehensive GPU/system status
+# =============================================================================
+set -Eeuo pipefail
+
+AI_HOME="${AI_HOME:-${HOME}/ai}"
+C_RESET='\033[0m'; C_BOLD='\033[1m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'
+C_RED='\033[0;31m'; C_CYAN='\033[0;36m'
+
+echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
+echo -e "${C_BOLD}  GPU STATUS${C_RESET}"
+echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
+echo ""
+
+# --- GPU ---
+echo -e "${C_BOLD}GPU:${C_RESET}"
+if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
+    printf "  GPU:              %s\n" "$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
+    printf "  VRAM:             %s\n" "$(nvidia-smi --query-gpu=memory.total --format=csv,noheader | head -1)"
+    printf "  VRAM USED:        %s\n" "$(nvidia-smi --query-gpu=memory.used --format=csv,noheader | head -1)"
+    printf "  VRAM FREE:        %s\n" "$(nvidia-smi --query-gpu=memory.free --format=csv,noheader | head -1)"
+    printf "  GPU UTILIZATION:  %s\n" "$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader | head -1)"
+    printf "  TEMPERATURE:      %s\n" "$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader | head -1)°C"
+    printf "  POWER:            %s / %s\n" "$(nvidia-smi --query-gpu=power.draw --format=csv,noheader | head -1)" "$(nvidia-smi --query-gpu=power.limit --format=csv,noheader | head -1)"
+    printf "  DRIVER:           %s\n" "$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)"
+    printf "  CUDA:             %s\n" "$(nvidia-smi | grep 'CUDA Version' | sed 's/.*CUDA Version: //' | sed 's/ .*//' || echo 'N/A')"
+else
+    printf "  GPU:              ${C_RED}NOT DETECTED${C_RESET}\n"
+    printf "  (nvidia-smi not available)\n"
+fi
+echo ""
+
+# --- CPU/RAM/DISK ---
+echo -e "${C_BOLD}CPU:${C_RESET}"
+printf "  CPU:              %s\n" "$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^[ \t]*//' || echo 'unknown')"
+printf "  CPU CORES:        %s\n" "$(grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo 0)"
+printf "  LOAD:             %s\n" "$(uptime | sed 's/.*load average: //' 2>/dev/null || echo 'N/A')"
+echo ""
+
+echo -e "${C_BOLD}RAM:${C_RESET}"
+printf "  RAM TOTAL:        %s GB\n" "$(awk '/MemTotal/ {printf "%.1f", $2/1024/1024}' /proc/meminfo)"
+printf "  RAM AVAILABLE:    %s GB\n" "$(awk '/MemAvailable/ {printf "%.1f", $2/1024/1024}' /proc/meminfo)"
+echo ""
+
+echo -e "${C_BOLD}DISK:${C_RESET}"
+df -h / 2>/dev/null | tail -1 | awk '{printf "  DISK:             %s used, %s free, %s total (%s%%)\n", $3, $4, $2, $5}'
+echo ""
+
+# --- Runtime status ---
+echo -e "${C_BOLD}RUNTIME STATUS:${C_RESET}"
+printf "  OLLAMA:           %s\n" "$(pgrep -f 'ollama serve' >/dev/null 2>&1 && echo "${C_GREEN}RUNNING${C_RESET}" || echo "stopped")"
+printf "  VLLM:             %s\n" "$(pgrep -f 'vllm.entrypoints' >/dev/null 2>&1 && echo "${C_GREEN}RUNNING${C_RESET}" || echo "stopped")"
+printf "  LLAMA.CPP:        %s\n" "$(pgrep -f 'llama_cpp.server' >/dev/null 2>&1 && echo "${C_GREEN}RUNNING${C_RESET}" || echo "stopped")"
+echo ""
+
+# --- Model status (portable: no GNU find -printf) ---
+echo -e "${C_BOLD}MODEL STATUS:${C_RESET}"
+models_dir="${AI_MODELS_DIR:-${AI_HOME}/models}"
+if [[ -d "${models_dir}" ]] && [[ -n "$(ls -A "${models_dir}" 2>/dev/null)" ]]; then
+    model_count=0
+    for d in "${models_dir}"/*/; do
+        [[ -d "${d}" ]] || continue
+        model_count=$((model_count + 1))
+        [[ "${model_count}" -le 20 ]] && echo "  $(basename "${d}")"
+    done
+    printf "  (Total: %s model directories)\n" "${model_count}"
+else
+    echo "  No models downloaded."
+fi
+echo ""
+
+# --- Ollama models ---
+if command -v ollama &>/dev/null; then
+    echo -e "${C_BOLD}OLLAMA MODELS:${C_RESET}"
+    ollama list 2>/dev/null | head -20 || echo "  (ollama not running)"
+    echo ""
+fi
+
+echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"

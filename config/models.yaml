@@ -1,0 +1,143 @@
+# =============================================================================
+# GPU Rental Kit — Model Registry / Aliases
+# =============================================================================
+# Define shortcut aliases for commonly used models.
+# Each entry maps a friendly name to a full model identifier.
+#
+# Format:
+#   alias:
+#     source: huggingface | ollama | custom
+#     name: "org/repo" or full path
+#     backend: ollama | vllm | llamacpp | auto
+#     min_vram_gb: <integer>  # informational
+#     notes: "brief description"
+# =============================================================================
+
+models:
+
+  # --- Small models (<12GB VRAM) ---
+  phi3:
+    source: ollama
+    name: "phi3:3.8b"
+    backend: ollama
+    min_vram_gb: 6
+    notes: "Microsoft Phi-3 Mini — small & capable"
+
+  qwen2-7b:
+    source: huggingface
+    name: "Qwen/Qwen2-7B-Instruct-GPTQ-Int4"
+    backend: vllm
+    min_vram_gb: 8
+    notes: "Qwen 2 7B 4-bit quantized"
+
+  gemma2-9b:
+    source: ollama
+    name: "gemma2:9b"
+    backend: ollama
+    min_vram_gb: 8
+    notes: "Google Gemma 2 9B"
+
+  llama3.1-8b:
+    source: ollama
+    name: "llama3.1:8b"
+    backend: ollama
+    min_vram_gb: 10
+    notes: "Meta Llama 3.1 8B"
+
+  # --- Medium models (16-23GB VRAM) ---
+  llama3-8b:
+    source: huggingface
+    name: "meta-llama/Meta-Llama-3-8B-Instruct"
+    backend: vllm
+    min_vram_gb: 16
+    notes: "Meta Llama 3 8B Instruct (full precision)"
+
+  qwen2.5-14b:
+    source: huggingface
+    name: "Qwen/Qwen2.5-14B-Instruct-GPTQ-Int4"
+    backend: vllm
+    min_vram_gb: 12
+    notes: "Qwen 2.5 14B 4-bit"
+
+  mistral-small:
+    source: ollama
+    name: "mistral-small"
+    backend: ollama
+    min_vram_gb: 14
+    notes: "Mistral Small"
+
+  phi3-medium:
+    source: huggingface
+    name: "microsoft/Phi-3-medium-4k-instruct"
+    backend: vllm
+    min_vram_gb: 16
+    notes: "Microsoft Phi-3 Medium"
+
+  # --- Large models (24-31GB VRAM) ---
+  llama3.1-70b:
+    source: huggingface
+    name: "hugging-quants/Meta-Llama-3.1-70B-Instruct-AWQ-INT4"
+    backend: vllm
+    min_vram_gb: 40
+    notes: "Llama 3.1 70B 4-bit — needs 40GB+ really"
+
+  mixtral-8x7b:
+    source: ollama
+    name: "mixtral:8x7b"
+    backend: ollama
+    min_vram_gb: 26
+    notes: "Mixtral 8x7B MoE"
+
+  qwen2.5-32b:
+    source: huggingface
+    name: "Qwen/Qwen2.5-32B-Instruct-GPTQ-Int4"
+    backend: vllm
+    min_vram_gb: 20
+    notes: "Qwen 2.5 32B 4-bit — fits in 24GB"
+
+  deepseek-coder-v2:
+    source: huggingface
+    name: "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct"
+    backend: vllm
+    min_vram_gb: 24
+    notes: "DeepSeek Coder V2 Lite (16B MoE)"
+
+  # --- Very large models (32GB+ VRAM) ---
+  llama3.1-70b-iq4:
+    source: ollama
+    name: "llama3.1:70b-instruct-q4_K_M"
+    backend: ollama
+    min_vram_gb: 40
+    notes: "Llama 3.1 70B Q4_K_M — needs 40GB+"
+
+  command-r-plus:
+    source: huggingface
+    name: "CohereForAI/c4ai-command-r-plus-4bit"
+    backend: vllm
+    min_vram_gb: 32
+    notes: "Cohere Command R+ 4-bit"
+
+  # --- GGUF models (for llama.cpp) ---
+  llama3-8b-gguf:
+    source: huggingface
+    name: "TheBloke/Llama-3-8B-Instruct-GGUF"
+    file: "llama-3-8b-instruct.Q4_K_M.gguf"
+    backend: llamacpp
+    min_vram_gb: 6
+    notes: "Llama 3 8B GGUF Q4_K_M (single file)"
+
+  mistral-7b-gguf:
+    source: huggingface
+    name: "TheBloke/Mistral-7B-Instruct-v0.2-GGUF"
+    file: "mistral-7b-instruct-v0.2.Q4_K_M.gguf"
+    backend: llamacpp
+    min_vram_gb: 6
+    notes: "Mistral 7B GGUF Q4_K_M (single file)"
+
+  codestral-22b-gguf:
+    source: huggingface
+    name: "TheBloke/Codestral-22B-v0.1-GGUF"
+    file: "codestral-22b-v0.1.Q4_K_M.gguf"
+    backend: llamacpp
+    min_vram_gb: 16
+    notes: "Codestral 22B GGUF Q4_K_M (single file)"

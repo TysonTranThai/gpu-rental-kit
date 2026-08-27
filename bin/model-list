@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# =============================================================================
+# model-list — List available models (aliases + downloaded)
+# =============================================================================
+set -Eeuo pipefail
+
+AI_HOME="${AI_HOME:-${HOME}/ai}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+C_RESET='\033[0m'; C_BOLD='\033[1m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'; C_CYAN='\033[0;36m'
+
+echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
+echo -e "${C_BOLD}  AVAILABLE MODELS${C_RESET}"
+echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
+echo ""
+
+# --- Registered aliases (from models.yaml) ---
+echo -e "${C_BOLD}REGISTERED ALIASES:${C_RESET}"
+echo "  (model-download <alias>)"
+echo ""
+
+if [[ -f "${SCRIPT_DIR}/config/models.yaml" ]]; then
+    # Parse the YAML for aliases using grep (simple approach)
+    while IFS= read -r line; do
+        # Skip comments and blank lines
+        [[ "${line}" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${line}" ]] && continue
+        if [[ "${line}" =~ ^[[:space:]]{2}[a-zA-Z0-9_.-]+: ]]; then
+            alias="$(echo "${line}" | sed 's/^[[:space:]]*//' | sed 's/:$//')"
+            printf "  %-22s" "${alias}"
+            # Try to read name and backend from subsequent lines
+            :
+        elif [[ "${line}" =~ name: ]]; then
+            name="$(echo "${line}" | sed 's/.*name:[[:space:]]*//' | sed 's/["'\'']//g')"
+            printf " %s\n" "${name}"
+        fi
+    done < "${SCRIPT_DIR}/config/models.yaml"
+fi
+echo ""
+
+# --- Downloaded models ---
+echo -e "${C_BOLD}DOWNLOADED MODELS:${C_RESET}"
+models_dir="${AI_MODELS_DIR:-${AI_HOME}/models}"
+if [[ -d "${models_dir}" ]] && [[ -n "$(ls -A "${models_dir}" 2>/dev/null)" ]]; then
+    find "${models_dir}" -maxdepth 1 -mindepth 1 -type d -printf "  %f\n" 2>/dev/null | sort
+else
+    echo "  (none)"
+fi
+echo ""
+
+# --- Ollama models ---
+if command -v ollama &>/dev/null; then
+    echo -e "${C_BOLD}OLLAMA MODELS:${C_RESET}"
+    ollama list 2>/dev/null || echo "  (ollama not running)"
+fi
+echo ""
+
+echo -e "${C_CYAN}Tip:${C_RESET} model-download <alias>  → download a registered alias"
+echo -e "      model-download <org/repo> → download any HF model"

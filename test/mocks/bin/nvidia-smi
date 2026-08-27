@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# =============================================================================
+# nvidia-smi — MOCK implementation for tests only.
+# =============================================================================
+# Reads MOCK_GPU_PROFILE (default rtx4090) and answers like real nvidia-smi:
+#   nvidia-smi -L
+#   nvidia-smi --query-gpu=name --format=csv,noheader
+#   nvidia-smi --query-gpu=memory.total --format=csv,noheader
+#   nvidia-smi --query-gpu=driver_version --format=csv,noheader
+#   nvidia-smi                       (full text output with CUDA Version line)
+# =============================================================================
+set -Eeuo pipefail
+
+PROFILE="${MOCK_GPU_PROFILE:-rtx4090}"
+MOCKS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROFILE_FILE="${MOCKS_DIR}/profiles/${PROFILE}.env"
+
+if [[ ! -f "${PROFILE_FILE}" ]]; then
+    echo "mock nvidia-smi: unknown profile '${PROFILE}'" >&2
+    exit 1
+fi
+
+# shellcheck source=/dev/null
+source "${PROFILE_FILE}"
+# MOCK_EXTRA_GPU_COUNT overrides the profile's MOCK_GPU_COUNT (used by tests)
+MOCK_GPU_COUNT="${MOCK_EXTRA_GPU_COUNT:-${MOCK_GPU_COUNT:-1}}"
+
+case "$*" in
+    *"-L"*)
+        echo "${MOCK_LINE1:-GPU 0: ${MOCK_NAME} (UUID: GPU-00000000-0000-0000-0000-000000000000)}"
+        if [[ "${MOCK_GPU_COUNT}" == "2" ]]; then
+            echo "${MOCK_LINE2:-GPU 1: ${MOCK_NAME} (UUID: GPU-11111111-1111-1111-1111-111111111111)}"
+        fi
+        ;;
+    *"--query-gpu=name"*)                echo "${MOCK_NAME}" ;;
+    *"--query-gpu=memory.total"*)        echo "${MOCK_MEM_TOTAL}" ;;
+    *"--query-gpu=memory.used"*)         echo "${MOCK_MEM_USED}" ;;
+    *"--query-gpu=memory.free"*)         echo "${MOCK_MEM_FREE}" ;;
+    *"--query-gpu=utilization.gpu"*)     echo "${MOCK_UTIL}" ;;
+    *"--query-gpu=temperature.gpu"*)     echo "${MOCK_TEMP}" ;;
+    *"--query-gpu=power.draw"*)          echo "${MOCK_POWER_DRAW}" ;;
+    *"--query-gpu=power.limit"*)         echo "${MOCK_POWER_LIMIT}" ;;
+    *"--query-gpu=driver_version"*)      echo "${MOCK_DRIVER}" ;;
+    *)
+        # Full text output — must include a "CUDA Version: X.Y" line
+        cat "${MOCKS_DIR}/outputs/${PROFILE}.txt"
+        ;;
+esac

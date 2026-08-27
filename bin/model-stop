@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# =============================================================================
+# model-stop — Stop running AI inference services
+# =============================================================================
+set -Eeuo pipefail
+
+AI_HOME="${AI_HOME:-${HOME}/ai}"
+C_RESET='\033[0m'; C_BOLD='\033[1m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'
+
+echo -e "${C_BOLD}[stop]${C_RESET} Stopping AI services..."
+
+stopped_any=0
+
+# Stop Ollama
+if pgrep -f "ollama serve" >/dev/null 2>&1; then
+    pkill -f "ollama serve" 2>/dev/null || true
+    rm -f "${AI_HOME}/logs/ollama.pid"
+    echo -e "  ${C_GREEN}[OK]${C_RESET} Ollama stopped."
+    stopped_any=1
+fi
+
+# Stop vLLM
+if pgrep -f "vllm.entrypoints" >/dev/null 2>&1; then
+    pkill -f "vllm.entrypoints" 2>/dev/null || true
+    echo -e "  ${C_GREEN}[OK]${C_RESET} vLLM stopped."
+    stopped_any=1
+fi
+
+# Stop llama.cpp
+if pgrep -f "llama_cpp.server" >/dev/null 2>&1; then
+    pkill -f "llama_cpp.server" 2>/dev/null || true
+    echo -e "  ${C_GREEN}[OK]${C_RESET} llama.cpp stopped."
+    stopped_any=1
+fi
+
+if [[ "${stopped_any}" -eq 0 ]]; then
+    echo -e "  ${C_YELLOW}No services were running.${C_RESET}"
+fi
+
+echo -e "${C_GREEN}[OK]${C_RESET} Done."

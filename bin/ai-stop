@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# =============================================================================
+# ai-stop — Stop all AI inference services
+# =============================================================================
+set -Eeuo pipefail
+
+AI_HOME="${AI_HOME:-${HOME}/ai}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [[ -f "${SCRIPT_DIR}/bin/model-stop" ]]; then
+    exec bash "${SCRIPT_DIR}/bin/model-stop"
+else
+    C_RESET='\033[0m'; C_GREEN='\033[0;32m'; C_RED='\033[0;31m'
+    echo "Stopping AI services..."
+    pkill -f "ollama serve" 2>/dev/null || true
+    pkill -f "vllm.entrypoints" 2>/dev/null || true
+    pkill -f "llama_cpp.server" 2>/dev/null || true
+    rm -f "${AI_HOME}/logs/ollama.pid"
+    echo -e "${C_GREEN}[OK]${C_RESET} All services stopped."
+fi

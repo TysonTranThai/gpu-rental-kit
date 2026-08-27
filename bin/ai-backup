@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# =============================================================================
+# ai-backup — Back up AI configuration
+# =============================================================================
+set -Eeuo pipefail
+
+AI_HOME="${AI_HOME:-${HOME}/ai}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# shellcheck source=scripts/backup.sh
+source "${SCRIPT_DIR}/scripts/backup.sh"
+
+case "${1:-}" in
+    --include-models|--full)
+        backup_ai_full
+        ;;
+    --restore)
+        # shellcheck source=scripts/restore.sh
+        source "${SCRIPT_DIR}/scripts/restore.sh"
+        restore_ai_backup "${2:-}"
+        ;;
+    --list)
+        list_backups
+        ;;
+    -h|--help|help)
+        echo "Usage: ai-backup [--include-models|--list|--restore <file>]"
+        echo ""
+        echo "  (no args)          — back up config/scripts/manifests (fast)"
+        echo "  --include-models   — back up everything including model files (slow)"
+        echo "  --list             — list existing backups"
+        echo "  --restore <file>   — restore from a backup tarball"
+        ;;
+    *)
+        backup_ai_config
+        ;;
+esac

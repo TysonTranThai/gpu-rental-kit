@@ -1,0 +1,57 @@
+# =============================================================================
+# GPU Rental Kit — .gitignore
+# =============================================================================
+
+# Secrets — NEVER commit
+.env
+*.env
+!config/defaults.env
+.env.*
+!config/*.env
+# Mock GPU profiles are SAFE test fixtures (fake nvidia-smi output) — keep tracked
+!test/mocks/profiles/
+!test/mocks/profiles/*.env
+secrets/
+*.key
+*.pem
+*.token
+hf_token
+
+# Machine-generated files
+ai/
+~/ai/
+logs/
+*.log
+
+# Backups (may contain large files)
+backups/
+*.tar.gz
+*.tar
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*~
+
+# Large model files
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.pth
+models/
+
+# Shellcheck
+.shellcheckrc
+
+# Test results (generated reports — keep out of git)
+test/results/

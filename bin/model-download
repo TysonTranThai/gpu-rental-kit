@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# =============================================================================
+# model-download — Download a model (alias or Hugging Face ID)
+# =============================================================================
+set -Eeuo pipefail
+
+AI_HOME="${AI_HOME:-${HOME}/ai}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODELS_DIR="${AI_MODELS_DIR:-${AI_HOME}/models}"
+
+C_RESET='\033[0m'; C_BOLD='\033[1m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'; C_RED='\033[0;31m'; C_CYAN='\033[0;36m'
+
+usage() {
+    echo "Usage: model-download <MODEL>"
+    echo ""
+    echo "  MODEL can be:"
+    echo "    - an alias from config/models.yaml (e.g. qwen2-7b)"
+    echo "    - a Hugging Face model ID (e.g. Qwen/Qwen2.5-7B-Instruct)"
+    echo "    - an Ollama model name (e.g. llama3.1:8b)"
+    echo ""
+    echo "Examples:"
+    echo "  model-download qwen2-7b"
+    echo "  model-download Qwen/Qwen2.5-7B-Instruct"
+    echo "  model-download llama3.1:8b"
+    exit 1
+}
+
+MODEL="${1:-}"
+if [[ -z "${MODEL}" ]]; then
+    usage
+fi
+
+# =============================================================================
+# resolve_alias — look up a model alias in models.yaml
+# =============================================================================
+resolve_alias() {
+    local alias="$1"
+    local models_yaml="${SCRIPT_DIR}/config/models.yaml"
+
+    if [[ ! -f "${models_yaml}" ]]; then
+        return 1
+    fi
+
+    # Look for the alias section and extract name/backend/source/file
+    local found=0
+    local name=""
+    local backend="auto"
+    local src="huggingface"
+    local file=""
+
+    while IFS= read -r line; do
+        if [[ "${found}" -eq 1 ]]; then
+            if [[ "${line}" =~ ^[[:space:]]{2}[a-zA-Z0-9_.-]+: ]]; then
+                # Next alias section — stop
+                break
+            fi
+            if [[ "${line}" =~ ^[[:space:]]+name:[[:space:]]* ]]; then
+                name="$(echo "${line}" | sed 's/.*name:[[:space:]]*//' | sed 's/["'\'']//g' | sed 's/[[:space:]]*$//')"
+            fi
+            if [[ "${line}" =~ ^[[:space:]]+backend:[[:space:]]* ]]; then
+                backend="$(echo "${line}" | sed 's/.*backend:[[:space:]]*//' | sed 's/["'\'']//g' | sed 's/[[:space:]]*$//')"
+            fi
+            if [[ "${line}" =~ ^[[:space:]]+source:[[:space:]]* ]]; then
+                src="$(echo "${line}" | sed 's/.*source:[[:space:]]*//' | sed 's/["'\'']//g' | sed 's/[[:space:]]*$//')"
+            fi
+            if [[ "${line}" =~ ^[[:space:]]+file:[[:space:]]* ]]; then
+                file="$(echo "${line}" | sed 's/.*file:[[:space:]]*//' | sed 's/["'\'']//g' | sed 's/[[:space:]]*$//')"
+            fi
+        fi
+        if [[ "${line}" == "  ${alias}:" ]]; then
+            found=1
+        fi
+    done < "${models_yaml}"
+
+    if [[ "${found}" -eq 1 ]] && [[ -n "${name}" ]]; then
+        echo "${name}|${backend}|${src}|${file}"
+        return 0
+    fi
+    return 1
+}
+
+# =============================================================================
+# download_hf_model — download via huggingface-cli or python
+# =============================================================================
+download_hf_model() {
+    local model="$1"
+    local file_filter="${2:-}"
+    local venv_dir="${AI_VENV_DIR:-${AI_HOME}/venv}"
+    local local_dir="${MODELS_DIR}/$(echo "${model}" | tr '/' '_')"
+
+    echo -e "${C_BOLD}[download]${C_RESET} Downloading ${model} → ${local_dir}"
+    if [[ -n "${file_filter}" ]]; then
+        echo -e "  ${C_CYAN}File filter:${C_RESET} only ${file_filter}"
+    fi
+    echo ""
+
+    mkdir -p "${MODELS_DIR}"
+
+    if [[ -f "${venv_dir}/bin/huggingface-cli" ]]; then
+        local hf_args=(download "${model}" --local-dir "${local_dir}" --local-dir-use-symlinks False --resume-download)
+        [[ -n "${file_filter}" ]] && hf_args+=(--include "${file_filter}")
+        "${venv_dir}/bin/huggingface-cli" "${hf_args[@]}"
+    elif [[ -f "${venv_dir}/bin/python" ]]; then
+        local patterns_arg=""
+        [[ -n "${file_filter}" ]] && patterns_arg=", allow_patterns='${file_filter}'"
+        "${venv_dir}/bin/python" -c "
+import sys
+from huggingface_hub import snapshot_download
+try:
+    snapshot_download('${model}', local_dir='${local_dir}', local_dir_use_symlinks=False${patterns_arg})
+    print('Download complete.')
+except Exception as e:
+    print(f'ERROR: {e}', file=sys.stderr)
+    sys.exit(1)
+"
+    else
+        echo -e "${C_RED}[ERROR]${C_RESET} Hugging Face tools not installed."
+        echo "  Run ./bootstrap.sh first."
+        return 1
+    fi
+
+    echo ""
+    echo -e "${C_GREEN}[OK]${C_RESET} Model downloaded to: ${local_dir}"
+    echo -e "  ${C_CYAN}To run:${C_RESET} model-run ${model}"
+}
+
+# =============================================================================
+# download_ollama_model — download via ollama pull
+# =============================================================================
+download_ollama_model() {
+    local model="$1"
+
+    echo -e "${C_BOLD}[download]${C_RESET} Pulling Ollama model: ${model}"
+
+    if ! command -v ollama &>/dev/null; then
+        echo -e "${C_RED}[ERROR]${C_RESET} Ollama not installed."
+        echo "  Run ./bootstrap.sh first."
+        return 1
+    fi
+
+    ollama pull "${model}" || {
+        echo -e "${C_RED}[ERROR]${C_RESET} Failed to pull ${model}."
+        return 1
+    }
+
+    echo -e "${C_GREEN}[OK]${C_RESET} Model pulled: ${model}"
+    echo -e "  ${C_CYAN}To run:${C_RESET} ai-start ollama ${model}"
+}
+
+# =============================================================================
+# Main download logic
+# =============================================================================
+# 1. Try alias resolution
+if alias_info="$(resolve_alias "${MODEL}")"; then
+    IFS='|' read -r resolved_name resolved_backend resolved_source resolved_file <<< "${alias_info}"
+    echo -e "${C_CYAN}[alias]${C_RESET} '${MODEL}' → ${resolved_name} (backend: ${resolved_backend})"
+
+    if [[ "${resolved_source}" == "ollama" ]] || [[ "${resolved_backend}" == "ollama" ]]; then
+        download_ollama_model "${resolved_name}"
+    else
+        download_hf_model "${resolved_name}" "${resolved_file:-}"
+    fi
+    exit $?
+fi
+
+# 2. Try Ollama model (contains colon or common ollama names)
+if [[ "${MODEL}" == *:* ]] && command -v ollama &>/dev/null; then
+    download_ollama_model "${MODEL}"
+    exit $?
+fi
+
+# 3. Try Hugging Face model (contains slash)
+if [[ "${MODEL}" == */* ]]; then
+    download_hf_model "${MODEL}"
+    exit $?
+fi
+
+# 4. Unknown
+echo -e "${C_RED}[ERROR]${C_RESET} Unknown model: ${MODEL}"
+echo "  Use 'model-list' to see available aliases."
+echo "  Or provide a full Hugging Face ID (org/repo) or Ollama name (name:tag)."
+exit 1

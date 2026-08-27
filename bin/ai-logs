@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# =============================================================================
+# ai-logs — View AI service logs
+# =============================================================================
+set -Eeuo pipefail
+
+AI_HOME="${AI_HOME:-${HOME}/ai}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [[ -f "${SCRIPT_DIR}/bin/model-logs" ]]; then
+    exec bash "${SCRIPT_DIR}/bin/model-logs" "$@"
+else
+    LOGS_DIR="${AI_LOGS_DIR:-${AI_HOME}/logs}"
+    echo "AI logs directory: ${LOGS_DIR}"
+    find "${LOGS_DIR}" -name "*.log" -printf "%T@ %f\n" 2>/dev/null | sort -rn | head -10 | while read -r _ f; do
+        echo "  ${f}"
+    done
+fi

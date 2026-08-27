@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+# =============================================================================
+# ai-start — Simple interface to start AI runtimes
+# =============================================================================
+set -Eeuo pipefail
+
+AI_HOME="${AI_HOME:-${HOME}/ai}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+C_RESET='\033[0m'; C_BOLD='\033[1m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'; C_CYAN='\033[0;36m'; C_RED='\033[0;31m'
+
+# =============================================================================
+# Show main menu
+# =============================================================================
+show_menu() {
+    echo ""
+    echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
+    echo -e "${C_BOLD}  AI START — GPU Rental Kit${C_RESET}"
+    echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
+    echo ""
+    echo "  1. Ollama"
+    echo "  2. vLLM"
+    echo "  3. llama.cpp"
+    echo "  4. GPU status"
+    echo "  5. Model list"
+    echo "  6. Exit"
+    echo ""
+    echo -n "  Choose [1-6]: "
+}
+
+# =============================================================================
+# start_ollama
+# =============================================================================
+start_ollama() {
+    local model="${1:-}"
+
+    if ! command -v ollama &>/dev/null; then
+        echo -e "${C_RED}[ERROR]${C_RESET} Ollama not installed. Run ./bootstrap.sh first."
+        return 1
+    fi
+
+    # Ensure ollama serve is running
+    if ! pgrep -f "ollama serve" >/dev/null 2>&1; then
+        echo -e "${C_BOLD}[ollama]${C_RESET} Starting Ollama server..."
+        if command -v systemctl &>/dev/null && systemctl list-unit-files ollama.service &>/dev/null 2>&1; then
+            sudo systemctl start ollama 2>/dev/null || true
+        else
+            nohup ollama serve > "${AI_HOME}/logs/ollama.log" 2>&1 &
+            echo $! > "${AI_HOME}/logs/ollama.pid"
+        fi
+        sleep 2
+    fi
+
+    if [[ -n "${model}" ]]; then
+        echo -e "${C_BOLD}[ollama]${C_RESET} Starting model: ${model}"
+        exec ollama run "${model}"
+    else
+        echo -e "${C_GREEN}[OK]${C_RESET} Ollama server running."
+        echo -e "  ${C_CYAN}Run a model:${C_RESET} ollama run <model>"
+        echo -e "  ${C_CYAN}List models:${C_RESET} ollama list"
+    fi
+}
+
+# =============================================================================
+# start_vllm
+# =============================================================================
+start_vllm() {
+    local model="${1:-}"
+
+    if [[ ! -f "${AI_HOME}/bin/vllm-serve" ]]; then
+        echo -e "${C_RED}[ERROR]${C_RESET} vLLM not configured. Run ./bootstrap.sh first."
+        return 1
+    fi
+
+    if [[ -z "${model}" ]]; then
+        echo -e "${C_YELLOW}Usage: ai-start vllm <MODEL>${C_RESET}"
+        echo -e "  e.g. ai-start vllm Qwen/Qwen2.5-7B-Instruct"
+        return 1
+    fi
+
+    echo -e "${C_BOLD}[vllm]${C_RESET} Starting vLLM with model: ${model}"
+    echo -e "  OpenAI-compatible API: http://127.0.0.1:${VLLM_PORT:-8000}/v1"
+    echo ""
+    exec "${AI_HOME}/bin/vllm-serve" "${model}"
+}
+
+# =============================================================================
+# start_llamacpp
+# =============================================================================
+start_llamacpp() {
+    local model="${1:-}"
+
+    if [[ ! -f "${AI_HOME}/bin/llamacpp-serve" ]]; then
+        echo -e "${C_RED}[ERROR]${C_RESET} llama.cpp not configured. Run ./bootstrap.sh first."
+        return 1
+    fi
+
+    if [[ -z "${model}" ]]; then
+        echo -e "${C_YELLOW}Usage: ai-start llama <MODEL_PATH>${C_RESET}"
+        echo -e "  e.g. ai-start llama ~/ai/models/llama-3-8b-q4.gguf"
+        return 1
+    fi
+
+    echo -e "${C_BOLD}[llamacpp]${C_RESET} Starting llama.cpp with model: ${model}"
+    exec "${AI_HOME}/bin/llamacpp-serve" "${model}"
+}
+
+# =============================================================================
+# show_gpu_status
+# =============================================================================
+show_gpu_status() {
+    if [[ -f "${SCRIPT_DIR}/bin/gpu-status" ]]; then
+        bash "${SCRIPT_DIR}/bin/gpu-status"
+    else
+        nvidia-smi 2>/dev/null || echo "nvidia-smi not available"
+    fi
+}
+
+# =============================================================================
+# show_models
+# =============================================================================
+show_models() {
+    if [[ -f "${SCRIPT_DIR}/bin/model-list" ]]; then
+        bash "${SCRIPT_DIR}/bin/model-list"
+    else
+        echo "Model list not available."
+    fi
+}
+
+# =============================================================================
+# Main
+# =============================================================================
+if [[ $# -ge 1 ]]; then
+    # Non-interactive mode
+    case "$1" in
+        ollama)
+            start_ollama "${2:-}"
+            ;;
+        vllm)
+            start_vllm "${2:-}"
+            ;;
+        llama|llamacpp|llama.cpp)
+            start_llamacpp "${2:-}"
+            ;;
+        status|gpu)
+            show_gpu_status
+            ;;
+        models|list)
+            show_models
+            ;;
+        -h|--help|help)
+            echo "Usage: ai-start [ollama|vllm|llama] [MODEL]"
+            echo "       ai-start                    # interactive menu"
+            ;;
+        *)
+            echo -e "${C_RED}Unknown command: $1${C_RESET}"
+            echo "Usage: ai-start [ollama|vllm|llama] [MODEL]"
+            exit 1
+            ;;
+    esac
+else
+    # Interactive mode
+    while true; do
+        show_menu
+        read -r choice
+        case "${choice}" in
+            1)
+                start_ollama
+                ;;
+            2)
+                echo -n "  Model (HF ID or path): "
+                read -r model
+                start_vllm "${model}"
+                ;;
+            3)
+                echo -n "  Model (GGUF path): "
+                read -r model
+                start_llamacpp "${model}"
+                ;;
+            4)
+                show_gpu_status
+                ;;
+            5)
+                show_models
+                ;;
+            6|q|quit|exit)
+                echo -e "${C_GREEN}Bye!${C_RESET}"
+                exit 0
+                ;;
+            *)
+                echo -e "${C_YELLOW}Invalid choice.${C_RESET}"
+                ;;
+        esac
+    done
+fi

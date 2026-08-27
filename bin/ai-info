@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# =============================================================================
+# ai-info — Display machine environment and configuration summary
+# =============================================================================
+set -Eeuo pipefail
+
+AI_HOME="${AI_HOME:-${HOME}/ai}"
+C_RESET='\033[0m'; C_BOLD='\033[1m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'; C_CYAN='\033[0;36m'
+
+echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
+echo -e "${C_BOLD}  AI ENVIRONMENT INFO${C_RESET}"
+echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
+echo ""
+
+# Read machine.env if available
+if [[ -f "${AI_HOME}/config/machine.env" ]]; then
+    echo -e "${C_BOLD}Machine Config:${C_RESET}"
+    grep -E '^(GPU_NAME|GPU_VRAM_GB|GPU_PROFILE|NVIDIA_DRIVER|CUDA_MAX|OS_NAME|CPU_MODEL|RAM_TOTAL_GB|DISK_AVAILABLE_GB|STORAGE_CLASS)' \
+        "${AI_HOME}/config/machine.env" 2>/dev/null | while read -r line; do
+        printf "  %s\n" "${line}"
+    done
+else
+    echo -e "${C_YELLOW}No machine.env found. Run ./bootstrap.sh to generate.${C_RESET}"
+fi
+echo ""
+
+echo -e "${C_BOLD}Directories:${C_RESET}"
+printf "  AI Home:     %s\n" "${AI_HOME}"
+printf "  Models:      %s\n" "${AI_MODELS_DIR:-${AI_HOME}/models}"
+printf "  Cache:       %s\n" "${AI_CACHE_DIR:-${AI_HOME}/cache}"
+printf "  Config:      %s\n" "${AI_CONFIG_DIR:-${AI_HOME}/config}"
+printf "  Logs:        %s\n" "${AI_LOGS_DIR:-${AI_HOME}/logs}"
+printf "  Venv:        %s\n" "${AI_VENV_DIR:-${AI_HOME}/venv}"
+echo ""
+
+echo -e "${C_BOLD}Tools:${C_RESET}"
+printf "  Python:      %s\n" "$(command -v python3 && python3 --version 2>&1 || echo 'not found')"
+printf "  pip:         %s\n" "$(command -v pip3 && pip3 --version 2>&1 | head -1 || echo 'not found')"
+printf "  Docker:      %s\n" "$(command -v docker && docker --version 2>&1 || echo 'not installed')"
+printf "  Ollama:      %s\n" "$(command -v ollama && ollama --version 2>&1 || echo 'not installed')"
+printf "  nvidia-smi:  %s\n" "$(command -v nvidia-smi >/dev/null 2>&1 && echo 'available' || echo 'not available')"
+echo ""
+
+echo -e "${C_BOLD}Commands:${C_RESET}"
+echo "  gpu-status     — GPU and system status"
+echo "  gpu-test       — Run GPU compute tests"
+echo "  model-list     — List available models"
+echo "  model-download — Download a model"
+echo "  model-run      — Run a model"
+echo "  model-stop     — Stop running services"
+echo "  ai-start       — Interactive startup menu"
+echo "  ai-backup      — Backup configuration"
+echo ""
+echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"

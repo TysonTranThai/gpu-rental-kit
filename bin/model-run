@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# =============================================================================
+# model-run — Run a downloaded model (interactive or server)
+# =============================================================================
+set -Eeuo pipefail
+
+AI_HOME="${AI_HOME:-${HOME}/ai}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODELS_DIR="${AI_MODELS_DIR:-${AI_HOME}/models}"
+
+C_RESET='\033[0m'; C_BOLD='\033[1m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'; C_RED='\033[0;31m'; C_CYAN='\033[0;36m'
+
+usage() {
+    echo "Usage: model-run <MODEL> [--backend ollama|vllm|llamacpp]"
+    echo ""
+    echo "Examples:"
+    echo "  model-run llama3.1:8b            # auto-detect (ollama)"
+    echo "  model-run Qwen/Qwen2.5-7B-Instruct --backend vllm"
+    echo "  model-run llama3-8b-gguf --backend llamacpp"
+    exit 1
+}
+
+MODEL="${1:-}"
+if [[ -z "${MODEL}" ]]; then
+    usage
+fi
+shift || true
+
+BACKEND="auto"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --backend) BACKEND="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+
+# =============================================================================
+# Determine backend if auto
+# =============================================================================
+determine_backend() {
+    if [[ "${BACKEND}" != "auto" ]]; then
+        return 0
+    fi
+
+    # Ollama-style names (name:tag without slash)
+    if [[ "${MODEL}" == *:* ]] && [[ "${MODEL}" != */* ]]; then
+        BACKEND="ollama"
+    elif [[ -d "${MODELS_DIR}/$(echo "${MODEL}" | tr '/' '_')" ]]; then
+        # Downloaded HF model — try vllm first, then llamacpp for GGUF
+        if find "${MODELS_DIR}/$(echo "${MODEL}" | tr '/' '_')" -name "*.gguf" 2>/dev/null | grep -q .; then
+            BACKEND="llamacpp"
+        else
+            BACKEND="vllm"
+        fi
+    else
+        # Default to vllm for HF IDs
+        BACKEND="vllm"
+    fi
+}
+
+determine_backend
+
+echo -e "${C_BOLD}[run]${C_RESET} Starting model: ${MODEL} (backend: ${BACKEND})"
+echo ""
+
+case "${BACKEND}" in
+    ollama)
+        if ! command -v ollama &>/dev/null; then
+            echo -e "${C_RED}[ERROR]${C_RESET} Ollama not installed."
+            exit 1
+        fi
+        exec ollama run "${MODEL}"
+        ;;
+
+    vllm)
+        model_path="${MODELS_DIR}/$(echo "${MODEL}" | tr '/' '_')"
+        if [[ -d "${model_path}" ]]; then
+            exec "${AI_HOME}/bin/vllm-serve" "${model_path}" "$@"
+        else
+            # Not downloaded — use HF ID directly
+            exec "${AI_HOME}/bin/vllm-serve" "${MODEL}" "$@"
+        fi
+        ;;
+
+    llamacpp)
+        gguf_file="$(find "${MODELS_DIR}/$(echo "${MODEL}" | tr '/' '_')" -name "*.gguf" 2>/dev/null | head -1)"
+        if [[ -z "${gguf_file}" ]]; then
+            echo -e "${C_RED}[ERROR]${C_RESET} No GGUF file found for ${MODEL}."
+            echo "  Download first: model-download ${MODEL}"
+            exit 1
+        fi
+        exec "${AI_HOME}/bin/llamacpp-serve" "${gguf_file}" "$@"
+        ;;
+
+    *)
+        echo -e "${C_RED}[ERROR]${C_RESET} Unknown backend: ${BACKEND}"
+        exit 1
+        ;;
+esac

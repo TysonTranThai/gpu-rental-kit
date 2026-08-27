@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# =============================================================================
+# gpu-test — Run GPU compute tests and lightweight benchmark
+# =============================================================================
+set -Eeuo pipefail
+
+# Resolve the gpu-rental-kit directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+AI_HOME="${AI_HOME:-${HOME}/ai}"
+
+# Source detection scripts
+# shellcheck source=scripts/detect_gpu.sh
+source "${SCRIPT_DIR}/scripts/detect_gpu.sh"
+# shellcheck source=scripts/test_gpu.sh
+source "${SCRIPT_DIR}/scripts/test_gpu.sh"
+
+# Run detection first
+run_gpu_detection
+
+# Run tests
+run_gpu_tests
+
+exit $?

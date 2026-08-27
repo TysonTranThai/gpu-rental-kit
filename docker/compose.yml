@@ -1,0 +1,49 @@
+# =============================================================================
+# GPU Rental Kit — Docker Compose
+# =============================================================================
+# Optional: run the AI runtime in Docker with GPU passthrough.
+#   docker compose -f docker/compose.yml up -d
+# =============================================================================
+
+services:
+
+  # --- Ollama ---
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - OLLAMA_HOST=0.0.0.0:11434
+      - OLLAMA_KEEP_ALIVE=5m
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+    # Bind to localhost only for security:
+    # Change 11434:11434 to 127.0.0.1:11434:11434
+
+  # --- AI runtime (build from Dockerfile) ---
+  ai-runtime:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gpu-ai-runtime
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - HF_HOME=/ai/cache/huggingface
+    volumes:
+      - ../ai/models:/ai/models
+      - ../ai/cache:/ai/cache
+      - ../ai/projects:/ai/projects
+    working_dir: /ai
+    stdin_open: true
+    tty: true
+    restart: "no"
+
+volumes:
+  ollama-models:
+    # Named volume — persists across container restarts on the same machine,
+    # but NOT across machine destruction unless backed up externally.

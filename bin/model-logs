@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# =============================================================================
+# model-logs — View logs from AI services
+# =============================================================================
+set -Eeuo pipefail
+
+AI_HOME="${AI_HOME:-${HOME}/ai}"
+LOGS_DIR="${AI_LOGS_DIR:-${AI_HOME}/logs}"
+
+C_RESET='\033[0m'; C_BOLD='\033[1m'; C_YELLOW='\033[0;33m'
+
+usage() {
+    echo "Usage: model-logs [ollama|vllm|llamacpp|all]"
+    echo ""
+    echo "  Shows recent logs from AI inference services."
+    echo "  Default: 'all' — shows all available logs"
+    exit 1
+}
+
+SERVICE="${1:-all}"
+
+show_ollama_logs() {
+    if [[ -f "${LOGS_DIR}/ollama.log" ]]; then
+        echo -e "${C_BOLD}--- Ollama ---${C_RESET}"
+        tail -50 "${LOGS_DIR}/ollama.log" 2>/dev/null || true
+    fi
+    # Also check systemd
+    if command -v journalctl &>/dev/null; then
+        echo -e "${C_BOLD}--- Ollama (systemd, last 20 lines) ---${C_RESET}"
+        journalctl -u ollama --no-pager -n 20 2>/dev/null || true
+    fi
+}
+
+show_vllm_logs() {
+    # vLLM logs to stdout/stderr when run in foreground
+    echo -e "${C_YELLOW}vLLM runs in foreground. Logs appear in the terminal where it was started.${C_RESET}"
+}
+
+show_llamacpp_logs() {
+    echo -e "${C_YELLOW}llama.cpp runs in foreground. Logs appear in the terminal where it was started.${C_RESET}"
+}
+
+show_setup_logs() {
+    if [[ -d "${LOGS_DIR}" ]]; then
+        echo -e "${C_BOLD}--- Setup Logs (last 3) ---${C_RESET}"
+        find "${LOGS_DIR}" -name "setup-*.log" -printf "%T@ %p\n" 2>/dev/null | sort -rn | head -3 | while read -r _ logfile; do
+            echo "  ${logfile}"
+        done
+    fi
+}
+
+case "${SERVICE}" in
+    ollama) show_ollama_logs ;;
+    vllm) show_vllm_logs ;;
+    llamacpp) show_llamacpp_logs ;;
+    all|"")
+        show_ollama_logs
+        show_vllm_logs
+        show_llamacpp_logs
+        show_setup_logs
+        ;;
+    *) usage ;;
+esac

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# =============================================================================
+# docker — MOCK implementation for tests only.
+# =============================================================================
+# Controlled by MOCK_DOCKER_OK=yes|no. When "no", `docker info` fails
+# (simulates docker installed-but-not-running or not installed).
+# =============================================================================
+set -Eeuo pipefail
+
+if [[ "${MOCK_DOCKER_OK:-no}" == "no" ]]; then
+    echo "docker: Cannot connect to the Docker daemon" >&2
+    exit 1
+fi
+
+case "$1" in
+    --version)
+        echo "Docker version 26.1.3, build b72abbb"
+        ;;
+    info)
+        cat <<'EOF'
+Client:
+ Version:    26.1.3
+ Context:    default
+Server:
+ Containers: 2
+ Running:    1
+ Paused:     0
+ Stopped:    1
+ Images:     5
+ Server Version: 26.1.3
+ Runtimes:  nvidia runc
+EOF
+        ;;
+    run)
+        # Simulate GPU passthrough run; fails unless MOCK_NVIDIA_CTK_OK=yes
+        if [[ "${MOCK_NVIDIA_CTK_OK:-no}" == "yes" ]]; then
+            exit 0
+        fi
+        echo "docker: Error response from daemon: could not select device driver" >&2
+        exit 1
+        ;;
+    *)
+        exit 0
+        ;;
+esac
