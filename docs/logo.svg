@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="GPU Rental Kit logo">
+  <!-- chip package -->
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="#0f172a"/>
+  <!-- die -->
+  <rect x="30" y="30" width="68" height="68" rx="8" fill="#1e293b" stroke="#334155" stroke-width="3"/>
+  <!-- pins -->
+  <g stroke="#38bdf8" stroke-width="5" stroke-linecap="round">
+    <line x1="14" y1="34" x2="26" y2="34"/>
+    <line x1="14" y1="52" x2="26" y2="52"/>
+    <line x1="14" y1="70" x2="26" y2="70"/>
+    <line x1="14" y1="88" x2="26" y2="88"/>
+    <line x1="102" y1="34" x2="114" y2="34"/>
+    <line x1="102" y1="52" x2="114" y2="52"/>
+    <line x1="102" y1="70" x2="114" y2="70"/>
+    <line x1="102" y1="88" x2="114" y2="88"/>
+    <line x1="34" y1="14" x2="34" y2="26"/>
+    <line x1="52" y1="14" x2="52" y2="26"/>
+    <line x1="70" y1="14" x2="70" y2="26"/>
+    <line x1="88" y1="14" x2="88" y2="26"/>
+    <line x1="34" y1="102" x2="34" y2="114"/>
+    <line x1="52" y1="102" x2="52" y2="114"/>
+    <line x1="70" y1="102" x2="70" y2="114"/>
+    <line x1="88" y1="102" x2="88" y2="114"/>
+  </g>
+  <!-- lightning bolt -->
+  <path d="M68 44 L52 68 L62 68 L56 84 L74 58 L63 58 Z" fill="#4ade80"/>
+</svg>

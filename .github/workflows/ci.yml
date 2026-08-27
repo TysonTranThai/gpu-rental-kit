@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Validate + full local suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Bash syntax check (every shell script)
+        run: |
+          set -e
+          for f in $(find . -type f \( -name '*.sh' -o -path './bin/*' -o -path './scripts/*' -o -path './test/mocks/bin/*' \)); do
+            if head -1 "$f" | grep -qE '^#!.*bash'; then
+              bash -n "$f"
+            fi
+          done
+
+      - name: shellcheck (error severity)
+        run: |
+          set -e
+          for f in $(find . -type f \( -name '*.sh' -o -path './bin/*' \)); do
+            if head -1 "$f" | grep -q '^#!.*bash'; then
+              shellcheck -x -S error "$f"
+            fi
+          done
+
+      - name: Project validation
+        run: ./bootstrap.sh --validate
+
+      - name: Run full local test suite
+        run: bash test/run_all.sh local
+
+      - name: Fail on any test failure
+        run: |
+          REPORT=test/results/final-report.txt
+          if [[ ! -f "$REPORT" ]]; then
+            echo "::error::final-report.txt missing — suite did not complete"
+            exit 1
+          fi
+          if grep -qE '^  FAIL: [1-9]' "$REPORT"; then
+            echo "::error::Test failures found:"
+            grep -E '^  (PASS|FAIL|SKIP):' "$REPORT"
+            exit 1
+          fi
+          echo "All local checks passed:"
+          grep -E '^  (PASS|FAIL|SKIP):' "$REPORT" | head -4

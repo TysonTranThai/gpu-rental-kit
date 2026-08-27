@@ -524,7 +524,7 @@ This machine was configured by the GPU Rental Kit.
 To rebuild this environment on a fresh machine:
 
 ```bash
-git clone <YOUR_REPO_URL> gpu-rental-kit
+git clone https://github.com/TysonTranThai/gpu-rental-kit.git gpu-rental-kit
 cd gpu-rental-kit
 ./bootstrap.sh
 ```

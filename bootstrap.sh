@@ -170,7 +170,7 @@ show_remote_instructions() {
        ssh root@SERVER_IP
   3. Copy this project and run ONE command:
 
-       git clone <YOUR_REPO_URL> gpu-rental-kit
+       git clone https://github.com/TysonTranThai/gpu-rental-kit.git gpu-rental-kit
        cd gpu-rental-kit
        ./bootstrap.sh --remote-gpu
 
@@ -186,12 +186,10 @@ show_remote_instructions() {
 
   6. When the rental ends: ai-backup, then rebuild on the next machine.
 
-  Optional one-liner (curl | bash):
-    curl -fsSL https://YOUR-HOST/gpu-rental-kit.sh | bash
-    ⚠ Security note: piping a remote script into bash runs it as you,
-    with no review. Prefer cloning a pinned repo/commit and inspecting
-    it first. The toolkit itself never installs NVIDIA drivers or
-    exposes servers publicly.
+  ⚠ Always clone the full repository — bootstrap.sh needs setup.sh,
+    scripts/, and config/ next to it. Prefer cloning a pinned
+    repo/commit and inspecting it first. The toolkit itself never
+    installs NVIDIA drivers or exposes servers publicly.
 
 EOF
 }
