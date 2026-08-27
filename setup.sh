@@ -152,7 +152,7 @@ GPU:
   PYTORCH:             ${pytorch_status}
   DOCKER:              ${docker_status}
   NVIDIA CONTAINER TOOLKIT: ${nctk_status}
-  OLLAMA:              ${OLLAMA_INSTALLED:-no}
+  OLLAMA:              ${OLLAMA_STATUS:-${OLLAMA_INSTALLED:-no}}
   VLLM:                ${VLLM_INSTALLED:-no}
   LLAMA.CPP:           ${LLAMACPP_INSTALLED:-no}
 
@@ -418,7 +418,7 @@ source "${SCRIPT_DIR}/scripts/setup_huggingface.sh"
 install_huggingface_cli
 create_hf_download_script
 
-# Ollama
+# Ollama (optional; failures do not abort the primary llama.cpp setup)
 # shellcheck source=scripts/setup_ollama.sh
 source "${SCRIPT_DIR}/scripts/setup_ollama.sh"
 run_ollama_setup
@@ -463,6 +463,8 @@ INTERNET_AVAILABLE="${INTERNET_AVAILABLE}"
 
 # --- Runtimes ---
 OLLAMA_INSTALLED="${OLLAMA_INSTALLED:-no}"
+OLLAMA_STATUS="${OLLAMA_STATUS:-${OLLAMA_INSTALLED:-no}}"
+OLLAMA_FAILURE_REASON="${OLLAMA_FAILURE_REASON:-}"
 VLLM_INSTALLED="${VLLM_INSTALLED:-no}"
 LLAMACPP_INSTALLED="${LLAMACPP_INSTALLED:-no}"
 PYTORCH_INSTALLED="${PYTORCH_INSTALLED:-no}"
@@ -568,7 +570,11 @@ echo -e "  to use the management commands directly."
 echo ""
 echo -e "  ${C_BOLD}To start an AI model now:${C_RESET}"
 if [[ "${HAS_NVIDIA_GPU}" == "yes" ]]; then
-    echo -e "    ${C_GREEN}ai-start ollama llama3.1:8b${C_RESET}  (simplest)"
+    if [[ "${OLLAMA_STATUS:-${OLLAMA_INSTALLED:-no}}" == "FAILED / OPTIONAL" ]]; then
+        echo -e "    ${C_YELLOW}Ollama: FAILED / OPTIONAL${C_RESET}"
+    else
+        echo -e "    ${C_GREEN}ai-start ollama llama3.1:8b${C_RESET}  (simplest)"
+    fi
     echo -e "    ${C_GREEN}ai-start vllm Qwen/Qwen2.5-7B-Instruct${C_RESET}  (OpenAI API)"
 else
     echo -e "    (No GPU — CPU-only operation)"
