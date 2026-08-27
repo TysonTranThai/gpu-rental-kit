@@ -5,53 +5,191 @@
 <h1 align="center">GPU Rental Kit</h1>
 
 <p align="center">
-  <strong>One command. A rented GPU becomes an AI inference server.</strong>
+  <strong>Turn a rented NVIDIA GPU VM into a ready-to-use self-hosted LLM server.</strong>
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="https://github.com/TysonTranThai/gpu-rental-kit/releases"><img src="https://img.shields.io/github/v/release/TysonTranThai/gpu-rental-kit?color=blue&label=release" alt="GitHub release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+  <a href="https://github.com/TysonTranThai/gpu-rental-kit/releases"><img src="https://img.shields.io/github/v/release/TysonTranThai/gpu-rental-kit?label=release" alt="Latest release"></a>
+  <a href="https://github.com/TysonTranThai/gpu-rental-kit/actions"><img src="https://img.shields.io/github/actions/workflow/status/TysonTranThai/gpu-rental-kit/ci.yml?label=CI" alt="CI status"></a>
   <img src="https://img.shields.io/badge/shell-bash-4EAA25.svg?logo=gnubash&logoColor=white" alt="Bash">
-  <img src="https://img.shields.io/badge/platform-Linux%20%2F%20macOS-lightgrey.svg" alt="Platform: Linux / macOS">
   <img src="https://img.shields.io/badge/NVIDIA-CUDA-76B900.svg?logo=nvidia&logoColor=white" alt="NVIDIA CUDA">
-  <img src="https://img.shields.io/badge/tests-530%20passing-brightgreen.svg" alt="Tests: 530 passing">
-  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs welcome">
 </p>
 
----
+> **The simple idea:** the rented GPU server runs the model. Your own computer—Mac, Windows PC, or Linux machine—connects to that server. **Your personal computer does not need an NVIDIA GPU.**
 
-## What is this?
+## What is gpu-rental-kit?
 
-**GPU Rental Kit** turns a freshly rented Linux NVIDIA GPU machine into a
-ready-to-use AI inference server with **one command**.
+`gpu-rental-kit` automates the setup of a rented Linux NVIDIA GPU machine for local/self-hosted LLM inference. It helps you go from a fresh GPU VM to a working model server without repeating the same manual setup each time.
 
-Renting a cloud GPU is easy. Setting it up is not — drivers, CUDA, Python,
-PyTorch, inference runtimes, model downloads, and testing usually eat an
-afternoon. This toolkit automates the whole pipeline: it detects your
-hardware, configures the environment, installs the runtime you want, downloads
-a model, runs it, and exposes an OpenAI-compatible API.
+It automates or assists with:
 
-## Who is it for?
+- GPU detection and CUDA validation
+- Python virtual environments and GPU-aware PyTorch
+- Ollama, llama.cpp, and vLLM runtimes
+- Hugging Face model downloads and model aliases
+- OpenAI-compatible inference servers
+- Optional Docker GPU support
+- Storage and persistence diagnostics
+- Backups, restore helpers, logs, and health checks
+- Local, mock, and real remote testing
 
-- **Anyone renting disposable GPU machines** (RTX 3090/4090/5090, V100, A100,
-  T4, …) for a few hours or days and wanting them productive immediately.
-- **Developers who want an OpenAI-compatible API** on their own rented hardware
-  — for less cost and with full control.
-- **People who rent repeatedly** and don't want to repeat the same setup dance
-  every time.
+The project is **provider-agnostic**: the provider can be any service that gives you SSH access to a Linux machine with a working NVIDIA GPU and internet access.
 
-## Why use it?
+## Platform Support
 
-| Problem with rented GPUs | GPU Rental Kit |
-|---|---|
-| Setup is manual and easy to botch | One command does it all |
-| You don't know what the machine actually has | Detects GPU, VRAM, driver, CUDA, storage honestly |
-| Storage may vanish when the rental ends | Classifies persistence — never falsely claims durability |
-| Runtimes are fiddly to install | Installs llama.cpp, Ollama, or vLLM, skipping what works |
-| You can't tell if it actually works | Tests the GPU and prints a machine report |
-| Machines are disposable | One-command rebuild + backup/restore |
+Two environments matter here:
 
-## How do I start?
+- **REMOTE GPU SERVER** — Linux with an NVIDIA GPU, CUDA, Ollama/llama.cpp/vLLM, models, and the inference API.
+- **LOCAL USER COMPUTER** — Windows, macOS, or Linux. Runs the user-facing tools and connects over SSH/API. It does NOT need an NVIDIA GPU.
+
+| Platform | Local Client | GPU Server |
+|---|:---:|:---:|
+| Windows | ✅ | ❌ current release |
+| macOS | ✅ | ❌ NVIDIA server setup |
+| Linux | ✅ | ✅ NVIDIA |
+
+In other words: your computer can be any of the three, while the rented Linux machine runs the NVIDIA GPU.
+
+### GPU Server
+
+The rented machine that actually runs the model must currently be:
+
+**Linux + NVIDIA GPU + working NVIDIA driver**
+
+The toolkit's real GPU setup runs on that Linux server. **macOS is a development/test environment only**, and **Windows is not the target operating system for the GPU server in this release**. Both are fully supported as local client platforms — see below.
+
+## Windows Support
+
+**YES — Windows is a supported local client platform.** It ships its own installer (`bootstrap.ps1`) and its own native command set (`bin\*.ps1`).
+
+### What gets installed
+
+`bootstrap.ps1` prepares only LOCAL CLIENT tooling:
+
+- Checks PowerShell version, architecture, and your Windows edition
+- Verifies required tools: Git and the OpenSSH client
+- Installs missing REQUIRED tools automatically via **winget** when available
+- Detects optional items (Python, WSL2) and honestly reports them — none are required
+- Docker Desktop is never required just to connect to a remote GPU server
+- Creates `%USERPROFILE%\.gpu-rental-kit\` with a `client.json` connection profile
+- Writes an installation log to `%USERPROFILE%\.gpu-rental-kit\install-*.log`
+
+It stores ONLY host/port/user identity used to build `ssh` commands — never credentials.
+
+### How to install
+
+Open **Windows Terminal** (recommended) or PowerShell:
+
+```powershell
+git clone https://github.com/TysonTranThai/gpu-rental-kit.git
+cd gpu-rental-kit
+.\bootstrap.ps1
+```
+
+Common variants:
+
+```powershell
+.\bootstrap.ps1 -Help                                          # full help
+.\bootstrap.ps1 -Yes                                           # non-interactive
+.\bootstrap.ps1 -CheckOnly                                     # detect/report only, changes nothing
+.\bootstrap.ps1 -RemoteHost 203.0.113.7 -RemoteUser ubuntu     # save connection details
+```
+
+If PowerShell refuses scripts, allow your own account once:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Elevation is normally NOT needed. Only installing the (rarely missing) OpenSSH Client capability asks for an Administrator window — the script tells you exactly what to run instead of elevating silently.
+
+The installer is idempotent: everything is checked before anything is installed, and existing `client.json` files are backed up (never silently overwritten).
+
+### How to connect to a GPU server
+
+```text
+Windows PC
+   |
+   | SSH / API (tunnel)
+   v
+Linux GPU VM
+   |
+   v
+NVIDIA GPU
+   |
+   v
+LLM
+```
+
+```powershell
+ssh user@SERVER_IP
+# non-default SSH port:
+ssh -p 2222 user@SERVER_IP
+```
+
+On the server, complete the real setup once (see [Quick start](#5-minute-quick-start)):
+
+```bash
+git clone https://github.com/TysonTranThai/gpu-rental-kit.git && cd gpu-rental-kit
+./bootstrap.sh --remote-gpu
+```
+
+### How SSH tunneling works
+
+Model servers bind to `127.0.0.1` on the LINUX SERVER for safety. A tunnel forwards a port from your PC to that private endpoint:
+
+```powershell
+ssh -N -L 8080:127.0.0.1:8080 user@SERVER_IP    # llama.cpp
+ssh -N -L 8000:127.0.0.1:8000 user@SERVER_IP    # vLLM
+```
+
+Keep that window open. Verify from a second terminal:
+
+```powershell
+.\bin\api-status.ps1                 # checks http://127.0.0.1:<port>/v1/models
+.\bin\api-status.ps1 -Port 8080      # one specific local port
+```
+
+### How to use the model
+
+```powershell
+.\bin\model-list.ps1                       # what's on the server
+.\bin\model-download.ps1 llama3.1-8b       # download remotely
+.\bin\ai-start.ps1 ollama llama3.1:8b      # interactive remote session
+.\bin\model-run.ps1 llama3.1:8b            # auto-detected backend
+.\bin\gpu-status.ps1                       # REMOTE hardware overview
+.\bin\ai-stop.ps1                          # stop the runtime
+.\bin\ai-backup.ps1 -Download              # back up AND pull tarball here
+```
+
+`bin\*.ps1` commands run the identically named bash command ON THE CONFIGURED REMOTE SERVER over SSH. They are clearly labeled `(REMOTE)` and **never inspect a local Windows GPU** — `gpu-status.ps1` reports the server's GPU, because that is where inference happens. Configure once with `-RemoteHost` or per-session with `$env:GRK_REMOTE_HOST='...'; $env:GRK_REMOTE_USER='...'`.
+
+### Do you need WSL2, Docker Desktop, or an NVIDIA GPU?
+
+- **WSL2:** optional, detected only if present; no workflow requires it.
+- **Docker Desktop:** NOT needed to connect to or use a remote GPU server.
+- **NVIDIA GPU:** NOT needed on the Windows PC — inference runs on the rented Linux server.
+
+## 5-minute quick start
+
+### 1. Rent a Linux NVIDIA GPU VM
+
+Choose a machine with an NVIDIA GPU, a working driver, SSH access, internet access, and enough disk for your model. Ubuntu 20.04/22.04/24.04 and Debian 11/12 are the primary supported environments.
+
+### 2. SSH into the GPU server
+
+Replace the username, host, and port with the values from your provider:
+
+```bash
+ssh user@SERVER_IP
+# If SSH uses a non-default port:
+ssh -p 2222 user@SERVER_IP
+```
+
+### 3. Clone the repository and bootstrap the server
+
+Run these commands **inside the remote Linux GPU server**:
 
 ```bash
 git clone https://github.com/TysonTranThai/gpu-rental-kit.git
@@ -59,310 +197,442 @@ cd gpu-rental-kit
 ./bootstrap.sh --remote-gpu
 ```
 
-That's the whole pitch. Details below.
-
----
-
-## How it works
-
-```
-┌────────────┐     ┌────────────┐     ┌──────────────────┐
-│  Your Mac  │ ──▶ │    SSH     │ ──▶ │  Cloud GPU box   │
-│  (dev only)│     │  one login │     │  (rented, Linux) │
-└────────────┘     └────────────┘     └────────┬─────────┘
-                                               │  ./bootstrap.sh --remote-gpu
-                                               ▼
-                                    ┌──────────────────────┐
-                                    │  Detect + configure  │
-                                    │  GPU · driver · CUDA │
-                                    │  VRAM · storage · OS │
-                                    └──────────┬───────────┘
-                                               ▼
-                                    ┌──────────────────────┐
-                                    │  llama.cpp (primary) │
-                                    │  Ollama · vLLM (opt) │
-                                    └──────────┬───────────┘
-                                               ▼
-                                    ┌──────────────────────┐
-                                    │   GGUF / quantized   │
-                                    │   model downloaded   │
-                                    └──────────┬───────────┘
-                                               ▼
-                                    ┌──────────────────────┐
-                                    │  OpenAI-compatible   │
-                                    │      HTTP API        │
-                                    └──────────────────────┘
-```
-
----
-
-## Quick start
-
-### 1. Rent a GPU machine
-
-Any Linux NVIDIA GPU instance — RTX 30/40/50 series, V100, A100, H100, T4, or
-similar. The toolkit is **provider-agnostic**: it works with RunPod, Vast.ai,
-Lambda, or any other provider that gives you SSH access to a Linux box with
-an NVIDIA GPU.
-
-### 2. SSH in and run ONE command
-
-```bash
-ssh root@SERVER_IP
-git clone https://github.com/TysonTranThai/gpu-rental-kit.git
-cd gpu-rental-kit
-./bootstrap.sh --remote-gpu
-```
-
-Fully non-interactive (CI-friendly):
+For an unattended run:
 
 ```bash
 ./bootstrap.sh --remote-gpu -y
 ```
 
-The bootstrap will:
+The setup is intended to be rerunnable and reuses detected installations where possible. It does not install NVIDIA drivers blindly.
 
-1. **Detect** the OS, GPU, VRAM, driver, CUDA, CPU, RAM, disk, and Docker
-2. **Classify** storage persistence (never claims durability it can't verify)
-3. **Install** Python/PyTorch and the inference runtimes (skipping what works)
-4. **Test** the GPU (nvidia-smi, CUDA, PyTorch matmul)
-5. **Report** — write a machine report and print exactly how to start a model
+### 4. Verify the machine
 
-When it finishes, check the report:
+After setup, open a new shell or load the command path, then run:
+
+```bash
+source ~/.bashrc
+gpu-status
+gpu-test
+model-list
+```
+
+The full report is written to:
 
 ```bash
 cat ~/ai/logs/machine-report.txt
 ```
 
-### 3. Check your GPU
+### 5. Download a small model
+
+The registry includes GGUF and Ollama examples. For a beginner-friendly Ollama workflow:
 
 ```bash
-gpu-status    # one-screen hardware summary
-gpu-test      # full compute test suite + light benchmark
+model-download llama3.1-8b
 ```
 
-### 4. Start a model
+For llama.cpp, download a GGUF alias:
 
 ```bash
-# llama.cpp (primary runtime) — GGUF models, low VRAM
-ai-start llama ~/ai/models/my-model.gguf
+model-download llama3-8b-gguf
+```
 
-# Ollama — simplest possible experience
+Check the available aliases with `model-list` and remember that model downloads consume disk space.
+
+### 6. Start inference
+
+Ollama is the easiest place to begin:
+
+```bash
 ai-start ollama llama3.1:8b
+```
 
-# vLLM — high-throughput OpenAI-compatible API
+For a GGUF model with the primary llama.cpp runtime:
+
+```bash
+ai-start llama ~/ai/models/llama3-8b-gguf/llama-3-8b-instruct.Q4_K_M.gguf
+```
+
+For vLLM:
+
+```bash
 ai-start vllm Qwen/Qwen2.5-7B-Instruct
 ```
 
-No arguments? `ai-start` shows an interactive menu.
+### 7. Connect from your own computer
 
-### 5. Use the OpenAI-compatible API
+For beginners, keep the server bound to localhost and create an SSH tunnel from your Mac, Windows PC, or Linux computer. The model stays on the remote GPU server; your local computer sends requests to it.
 
-```bash
-curl http://127.0.0.1:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model": "qwen", "messages": [{"role": "user", "content": "Hello!"}]}'
+## How the pieces fit together
+
+```mermaid
+flowchart TD
+    C[YOUR COMPUTER<br/>macOS / Windows / Linux]
+    T[SSH tunnel or secured API connection]
+    S[REMOTE LINUX GPU SERVER]
+    G[NVIDIA GPU]
+    R[Ollama<br/>llama.cpp<br/>vLLM]
+    M[MODEL]
+    C --> T --> S
+    S --> G
+    S --> R --> M
 ```
 
-> **Safety first:** servers bind to `127.0.0.1` by default — localhost only.
-> See [Security](#security).
+In plain English: your computer is the client, while the rented Linux machine is the model server. The server loads the model into GPU memory and performs inference. SSH, an API request, or an SSH tunnel carries requests and responses between the two machines.
 
----
+## Runtime choices
 
-## Runtimes
+Start with **Ollama** if you are new. It provides the simplest model download and run experience.
 
-| Runtime | Role | Best for | Start with |
-|---|---|---|---|
-| **llama.cpp** | **Primary** | GGUF quantized models on modest VRAM; CPU fallback | `ai-start llama <model.gguf>` |
-| **Ollama** | Optional | Zero-config local models | `ai-start ollama llama3.1:8b` |
-| **vLLM** | Optional | High-throughput OpenAI-compatible serving | `ai-start vllm <model-id>` |
+| Runtime | What it is good for | Typical command |
+|---|---|---|
+| **Ollama** | Easiest beginner workflow and simple model management | `ai-start ollama llama3.1:8b` |
+| **llama.cpp** | GGUF models, lightweight serving, CUDA acceleration, and detailed control | `ai-start llama /path/to/model.gguf` |
+| **vLLM** | Higher-throughput model serving and an OpenAI-compatible API | `ai-start vllm Qwen/Qwen2.5-7B-Instruct` |
 
-All three are installed by `bootstrap.sh` and managed through the same `ai-*`
-and `model-*` commands, so you can switch backends without relearning
-anything.
+**llama.cpp is the primary runtime in this project.** Ollama and vLLM are optional alternatives. If an optional runtime is unavailable, a working llama.cpp installation remains the important baseline.
 
----
+## Windows Users
+
+### Can I use this from Windows?
+
+**Yes.** Rent a Linux NVIDIA GPU server, connect to it from Windows, and run the GPU setup on the Linux server. Your Windows computer is the client; it does not run the Linux GPU setup natively and does not need an NVIDIA GPU.
+
+Windows 10 and 11 commonly include OpenSSH through Windows Terminal or PowerShell:
+
+```powershell
+ssh user@SERVER_IP
+# Non-default SSH port:
+ssh -p 2222 user@SERVER_IP
+```
+
+Once connected, run on the server:
+
+```bash
+git clone https://github.com/TysonTranThai/gpu-rental-kit.git
+cd gpu-rental-kit
+./bootstrap.sh --remote-gpu
+```
+
+To use an API through an SSH tunnel, open a second Windows Terminal window and forward the server's localhost port. For llama.cpp's default port:
+
+```powershell
+ssh -N -L 8080:127.0.0.1:8080 user@SERVER_IP
+```
+
+Keep that window open. Windows applications can then use `http://127.0.0.1:8080` as the local end of the tunnel. WSL2 is **optional**, not mandatory; Windows Terminal, PowerShell, and OpenSSH are enough for the SSH workflow.
+
+## macOS Users
+
+A Mac can manage and use the remote GPU server, and it does not need an NVIDIA GPU. Do **not** run `./bootstrap.sh --remote-gpu` on macOS. Instead, SSH into the Linux GPU server and run it there:
+
+```bash
+ssh user@SERVER_IP
+git clone https://github.com/TysonTranThai/gpu-rental-kit.git
+cd gpu-rental-kit
+./bootstrap.sh --remote-gpu
+```
+
+On macOS, running `./bootstrap.sh` without `--remote-gpu` opens the development menu — an equivalent local bootstrap experience to Windows' `bootstrap.ps1`. You can also run the Mac-safe checks directly:
+
+```bash
+./bootstrap.sh --validate
+./bootstrap.sh --test
+```
+
+To forward llama.cpp's default API port to your Mac:
+
+```bash
+ssh -N -L 8080:127.0.0.1:8080 user@SERVER_IP
+```
+
+Then use `http://127.0.0.1:8080` from a Mac application while the tunnel is open.
+
+## Remote API access
+
+The runtimes use localhost-safe defaults:
+
+- **llama.cpp:** `127.0.0.1:8080`
+- **vLLM:** `127.0.0.1:8000/v1`
+- **Ollama:** `127.0.0.1:11434`
+
+### A. SSH tunnel — recommended for beginners
+
+Run this on your personal computer:
+
+```bash
+# llama.cpp
+ssh -N -L 8080:127.0.0.1:8080 user@SERVER_IP
+
+# vLLM instead
+ssh -N -L 8000:127.0.0.1:8000 user@SERVER_IP
+```
+
+The remote service remains private, and your local application connects to `localhost`.
+
+### B. Public IP and port — advanced
+
+You can deliberately bind a service to `0.0.0.0` and permit a provider firewall port, but this is not recommended for a first setup. Configure authentication where supported and restrict source IPs. Do not expose Ollama's raw port 11434 to the public internet without a carefully secured network design.
+
+### C. Domain + HTTPS — advanced/future deployment
+
+For a long-running public service, place an authenticated HTTPS reverse proxy in front of the model server and add TLS, firewall restrictions, rate limiting, monitoring, and backups. A domain is not required for SSH tunneling.
+
+## OpenAI-compatible APIs: what that means
+
+An OpenAI-compatible API is an HTTP interface with familiar endpoints such as `/v1/chat/completions`. Applications that know how to talk to an OpenAI API can often be configured to send inference requests to your remote vLLM or llama.cpp server instead of running a model locally.
+
+This provides **model inference only**. It does **not** automatically give the remote model access to your personal computer's files, terminal, filesystem, Git repository, or other tools.
+
+Keep the roles separate:
+
+- **Model server:** loads the model and generates responses.
+- **Local client:** owns local tools, files, terminal, and Git access.
+
+Any tool access must be intentionally implemented and permissioned by the client application.
+
+## Security warning
+
+> **Never expose an unauthenticated LLM API to the public internet.**
+
+Recommended order of preference:
+
+1. Use an SSH tunnel for personal access.
+2. If public access is required, use HTTPS, authentication, rate limiting, firewall/network restrictions, and a carefully scoped reverse proxy.
+3. Keep Ollama's raw `11434` port private unless you have explicitly secured it.
+4. Never commit API keys, provider credentials, or model hub tokens.
+
+The toolkit defaults services to `127.0.0.1`, does not open public ports by itself, and does not install NVIDIA drivers blindly.
+
+Local-capability separation: connecting a client to the server never grants that server access to your computer's filesystem, shell, or credentials. On Windows this means `C:\`, Documents, Desktop, SSH keys, browser data, and stored passwords stay on your PC — nothing is ever shared automatically with the remote GPU server, no matter what API it exposes. Any future agent-style tool access must be explicitly implemented and permissioned client-side by you.
+
+## Storage and rental warning
+
+Rented GPU machines may be disposable. Local disk persistence is provider- and rental-dependent. The toolkit intentionally reports:
+
+```text
+PERSISTENCE UNKNOWN — DO NOT RELY ON LOCAL STORAGE
+```
+
+Before ending a rental:
+
+- back up configuration and scripts with `ai-backup`
+- back up important models/data with `ai-backup --include-models` when practical
+- copy critical backups off the rented machine
+- verify the provider's persistence policy rather than assuming the disk survives deletion
 
 ## Command reference
 
-### `bootstrap.sh`
+These are the commands installed into `~/ai/bin` by setup:
 
-| Flag | What it does |
+| Command | Purpose |
 |---|---|
-| `--remote-gpu` | **The one you want on a rented GPU machine.** Full setup: detect → configure → install → test → report. |
-| `-y`, `--yes` | Auto-confirm all prompts (safe with `--remote-gpu`). |
-| `--validate` | Local project sanity check — syntax + structure + shellcheck. Works anywhere. |
-| `--test` | Run the full local test suite (mock GPU tests included). Works anywhere. |
-| `--help` | Show usage. |
+| `bootstrap.sh` | Main setup, validation, and test entry point |
+| `gpu-status` | Show GPU, driver, CUDA, and runtime status |
+| `gpu-test` | Run GPU compute checks and a light benchmark |
+| `model-list` | List registered model aliases and downloaded models |
+| `model-download` | Download a registered alias, Hugging Face model, or Ollama model |
+| `model-run` | Run a model using Ollama, vLLM, or llama.cpp |
+| `model-stop` | Stop a running model process |
+| `ai-start` | Start Ollama, vLLM, or llama.cpp; no arguments opens a menu |
+| `ai-stop` | Stop the active AI runtime |
+| `ai-info` | Show AI environment information |
+| `ai-backup` | Back up configuration; `--include-models` includes model files |
 
-On macOS with no flags, `bootstrap.sh` opens the **development menu**
-(validate / test / mock GPU tests / remote instructions).
+Windows equivalents live in `bin\*.ps1` and use the SAME names (`gpu-status.ps1`, `gpu-test.ps1`, `model-list.ps1`, `model-download.ps1`, `model-run.ps1`, `model-stop.ps1`, `ai-start.ps1`, `ai-stop.ps1`, `ai-info.ps1`, `ai-backup.ps1`), plus `api-status.ps1` for tunnel checks. They execute against the configured REMOTE server over SSH — see [Windows Support](#windows-support).
 
-### Everyday commands (installed into `~/ai/bin`)
+Useful additional commands include `ai-logs`, `model-logs`, and `model-stop`.
 
-| Command | What it does |
-|---|---|
-| `gpu-status` | One-screen GPU + system status (VRAM, util, temp, power, CUDA). |
-| `gpu-test` | GPU compute tests + light benchmark. |
-| `ai-start` | Start a runtime/model, or show the interactive menu. |
-| `ai-stop` | Stop the running model/runtime. |
-| `ai-info` | System + environment summary. |
-| `ai-logs` | Tail logs for all runtimes. |
-| `model-download` | Download a model (alias, Hugging Face ID, or Ollama name). |
-| `model-list` | List downloaded models. |
-| `model-run` | Run a model with backend auto-detection. |
-| `model-stop` | Stop a running model. |
-| `model-logs` | Per-runtime logs. |
-| `ai-backup` | Back up config, scripts, manifests — or models too. |
+## Common workflows
 
-### Managing models
+### I just rented a GPU
 
 ```bash
-model-download qwen2-7b                    # registered alias (see config/models.yaml)
-model-download Qwen/Qwen2.5-7B-Instruct    # any Hugging Face model
-model-download llama3.1:8b                 # any Ollama model
-
-model-list                                 # what's on disk
-model-run llama3-8b-gguf --backend llamacpp
-model-stop
+ssh user@SERVER_IP
+git clone https://github.com/TysonTranThai/gpu-rental-kit.git
+cd gpu-rental-kit
+./bootstrap.sh --remote-gpu
+source ~/.bashrc
+gpu-status
+gpu-test
 ```
 
----
-
-## Configuration
-
-Everything lives in `config/`:
-
-| File | Purpose |
-|---|---|
-| `config/defaults.env` | All defaults (paths, ports, versions). Every value can be overridden with an environment variable. |
-| `config/models.yaml` | Model aliases — short names that expand to full model IDs, with backend and VRAM hints. |
+### I want to run Ollama
 
 ```bash
-# Any default can be overridden on the command line:
-AI_MODELS_DIR=/mnt/ssd/models ./bootstrap.sh --remote-gpu
+model-download llama3.1-8b
+ai-start ollama llama3.1:8b
 ```
 
----
+Ollama listens on localhost port `11434` by default. Use an SSH tunnel rather than exposing that port publicly.
 
-## Docker (optional)
-
-Native execution works fine and is the default. If you prefer containers, a
-CUDA-enabled runtime image and compose file are included:
+### I want llama.cpp
 
 ```bash
-docker build -t gpu-ai-runtime -f docker/Dockerfile docker/
-docker run --gpus all -it gpu-ai-runtime
+model-download llama3-8b-gguf
+model-list
+# Use the actual .gguf path shown in ~/ai/models:
+ai-start llama ~/ai/models/llama3-8b-gguf/llama-3-8b-instruct.Q4_K_M.gguf
 ```
 
----
+llama.cpp is the primary runtime and serves localhost port `8080` by default.
 
-## Project layout
+### I want an OpenAI-compatible API
 
-```
-gpu-rental-kit/
-├── bootstrap.sh            # ONE entry point (remote GPU / macOS dev menu)
-├── setup.sh                # setup orchestrator (Linux GPU machines only)
-├── config/                 # defaults.env + models.yaml aliases
-├── scripts/                # detection, setup, test, backup, cleanup
-├── bin/                    # gpu-status, gpu-test, model-*, ai-* commands
-├── docker/                 # optional CUDA runtime image + compose
-├── docs/                   # logo + documentation assets
-└── test/                   # macOS-safe test suite + mock GPU/docker profiles
-```
-
----
-
-## Testing
-
-Everything is Mac-safe, honestly labeled, and runnable with one command:
+For vLLM:
 
 ```bash
-bash test/run_all.sh local    # full local suite: 521 checks + mocks + diagnostics
-bash test/run_all.sh mock     # GPU/provider mocks only
-bash test/run_all.sh all      # everything currently possible (recommended)
+ai-start vllm Qwen/Qwen2.5-7B-Instruct
 ```
 
-Current status: **530 checks passing** (521 local + 9 mock GPU), 0 failures —
-remote tests honestly report `SKIP` when no GPU machine is configured.
+For llama.cpp, use a GGUF file:
 
-**Honesty rules** baked into the harness:
+```bash
+ai-start llama ~/ai/models/my-model.gguf
+```
 
-- Mock results are labeled `MOCK`; real results are labeled `REAL`.
-- A skipped test is **never** counted as passed.
-- When storage durability can't be verified, it prints
-  `PERSISTENCE UNKNOWN — DO NOT RELY ON LOCAL STORAGE`.
-- Remote tests connect over SSH and never hard-code credentials (key auth,
-  SSH agent, and `~/.ssh/config` all supported).
+Then forward the relevant localhost port with SSH. vLLM uses `http://127.0.0.1:8000/v1`; llama.cpp uses `http://127.0.0.1:8080`.
 
-Mock GPU profiles (RTX 3090/4090/5090/5060 Ti/4070 Ti Super, V100) exercise
-detection and VRAM classification with no hardware. Real GPU tests only ever
-run on a Linux GPU machine — `--remote-gpu` refuses to run on macOS, and the
-suite never claims a GPU test passed without a GPU.
+### I want to connect from Windows
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to run and extend the tests.
+```powershell
+ssh -N -L 8080:127.0.0.1:8080 user@SERVER_IP
+```
 
----
+Keep the tunnel open and point your local client at `http://127.0.0.1:8080`.
 
-## Supported environments
+### I want to connect from Mac
 
-- **Remote (runtime):** Ubuntu 20.04 / 22.04 / 24.04, Debian 11/12, any NVIDIA
-  GPU with a working driver and CUDA. Any VRAM size — the toolkit
-  auto-classifies small → very-large and picks fitting models.
-- **Development (tests):** macOS (Bash 3.2+, the system `/bin/bash` works fine), no GPU required.
+```bash
+ssh -N -L 8080:127.0.0.1:8080 user@SERVER_IP
+```
 
----
+The Mac is the client; the rented Linux machine is the GPU server.
 
-## What it does NOT do
+### My rental is ending
 
-- **Does NOT** install NVIDIA drivers blindly (avoids breaking provider images)
-- **Does NOT** download huge models automatically
-- **Does NOT** expose inference servers publicly
-- **Does NOT** require Docker (native execution works fine)
-- **Does NOT** run real GPU tests on your Mac (no GPU there — mocks instead)
+```bash
+ai-backup
+ai-backup --include-models
+ai-backup --list
+```
 
----
+Copy the resulting backup files to storage outside the rental before deleting the machine.
 
 ## Troubleshooting
 
-| Problem | Fix |
-|---|---|
-| `nvidia-smi` not found | NVIDIA driver missing. `sudo apt install -y nvidia-driver-550`, reboot, re-run bootstrap. |
-| PyTorch reports no CUDA | Reinstall: `~/ai/venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cu124` |
-| Ollama not starting | Check: `sudo systemctl status ollama` or `cat ~/ai/logs/ollama.log` |
-| vLLM out of memory | Model too large for VRAM. Try a smaller model or `--max-model-len`. |
-| Docker GPU not working | Verify: `docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi` |
-| Model download fails | Check internet: `curl -I https://huggingface.co`. Check HF token for gated models. |
-| Commands not found after setup | `source ~/.bashrc` or open a new terminal. |
-| `bootstrap.sh` on macOS | Expected — macOS is the dev environment. Use the dev menu or `--test`. |
+| Symptom | Likely cause | Diagnose | Next step |
+|---|---|---|---|
+| No NVIDIA GPU detected | Wrong machine/image, GPU not attached, or provider issue | `nvidia-smi` | Confirm the rental includes an NVIDIA GPU and ask the provider about passthrough |
+| CUDA unavailable | Driver, CUDA/PyTorch mismatch, or broken environment | `nvidia-smi`; `~/ai/venv/bin/python -c 'import torch; print(torch.cuda.is_available())'` | Review the setup log; do not install a random driver over a provider image |
+| SSH connection refused | Wrong IP/port, firewall, or SSH service unavailable | `ssh -vvv -p PORT user@SERVER_IP` | Verify provider connection details and allow the configured SSH port |
+| Port already in use | Another runtime or process owns 8080/8000/11434 | `ss -ltnp \| grep -E ':8080|:8000|:11434'` | Stop the old service with `ai-stop`, or choose a different runtime port |
+| Model too large for VRAM | Model weights/context exceed available GPU memory | `gpu-status`; inspect the model size and VRAM | Use a smaller or quantized model, reduce context, or use a larger GPU |
+| Out of disk space | Models/cache/logs filled the rental disk | `df -h`; `du -sh ~/ai/*` | Remove unused models/cache or rent a larger disk |
+| Docker GPU unavailable | Docker or NVIDIA Container Toolkit is missing/incompatible | `docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi` | Use native execution, or install the provider-compatible Docker GPU components |
+| API cannot be reached | Service stopped, wrong port, or tunnel missing | `curl http://127.0.0.1:8080/health`; `ss -ltnp` | Check `ai-logs`, start the correct runtime, and verify the SSH tunnel |
+| Ollama fails to install | Missing extraction prerequisite or network/package issue | `command -v zstd`; `cat ~/ai/logs/setup-*.log` | Rerun bootstrap; zstd is handled automatically on supported package-manager systems |
+| Windows: script won't run | PowerShell execution policy | `Get-ExecutionPolicy -Scope CurrentUser` | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, then rerun `bootstrap.ps1` |
+| Windows: winget missing | Older Windows build without App Installer | `winget --version` in PowerShell | Install Git/SSH manually (git-scm.com, OpenSSH capability) and rerun `-CheckOnly` |
+| Windows: ssh not found | Optional OpenSSH Client capability absent | `ssh -V` in PowerShell | Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0 from an Administrator PowerShell |
+| Windows: API unreachable through tunnel | Tunnel closed or wrong port | `.\bin\api-status.ps1` | Reopen the ssh tunnel window, check the port matches llama.cpp (8080) / vLLM (8000) |
 
-View logs at any time:
+View logs with:
 
 ```bash
 ai-logs
-# or
+model-logs all
 cat ~/ai/logs/setup-*.log
 ```
 
----
+## FAQ
 
-## Security
+**Can I use this on Windows?**
+Yes—as a client connecting to a Linux NVIDIA GPU server. The GPU setup itself runs on Linux.
 
-- Servers bind to `127.0.0.1` by default (`EXPOSE_PUBLICLY=false`). Binding
-  to `0.0.0.0` exposes the API to the network — only do that on a trusted
-  network, behind a firewall, and with authentication enabled.
-- The toolkit never installs NVIDIA drivers and never opens public ports on
-  its own.
-- No credentials are stored or hard-coded anywhere. Secrets come from your
-  environment (e.g. `HF_TOKEN`) and are git-ignored.
-- Found a vulnerability? See [SECURITY.md](SECURITY.md).
+**Does my PC need an NVIDIA GPU?**
+No. The remote server can run the model and your computer can connect to it.
 
----
+**Can I use a Mac?**
+Yes. Use the Mac as a client and development/test computer, and run the real GPU setup after SSH-ing into the Linux server.
 
-## Contributing
+**Can I run the GPU setup directly on macOS?**
+No. Do not run `./bootstrap.sh --remote-gpu` on macOS. Use the Mac-safe validation/test workflow locally and run the GPU setup remotely.
 
-Contributions are welcome — docs, tests, new mock profiles, provider
-recipes, bug reports. See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
+**Do I need Docker?**
+No. Native execution is the default. Docker support is optional for Docker-based workflows.
+
+**Do I need a domain?**
+No. SSH tunneling is usually easiest. A public IP and port can work with appropriate security, and a domain is an advanced HTTPS option.
+
+**Will my models survive when the rental ends?**
+Not guaranteed. Check the provider's persistence policy and copy important models and backups elsewhere.**Does the API automatically let the model control my computer?**
+
+No. The API provides inference. Local files, terminal, tools, and Git remain separate client-side capabilities.
+
+**Do I need WSL2 to use gpu-rental-kit from Windows?**
+
+No. `bootstrap.ps1` uses native Windows tools (PowerShell, Git, OpenSSH). WSL2 is detected only if present and never required.
+
+**Do I need Docker Desktop?**
+
+No for remote workflows — connecting to and using a remote GPU server needs only SSH plus an API client. Docker matters solely if you choose the optional Docker-based setup path ON THE SERVER.
+
+**Does `gpu-status.ps1` show my Windows PC's GPU?**
+
+No — it shows the REMOTE Linux server's GPU status over SSH, honestly labeled `(REMOTE)`. The Windows client intentionally has no local NVIDIA inspection, because inference runs on the server.
+
+**How do I install the local tools on Windows?**
+
+```powershell
+git clone https://github.com/TysonTranThai/gpu-rental-kit.git
+cd gpu-rental-kit
+.\bootstrap.ps1
+```
+
+It installs missing prerequisites via winget and writes `%USERPROFILE%\.gpu-rental-kit\client.json` when you pass `-RemoteHost ...`.
+
+## Supported environments and limitations
+
+- **GPU runtime:** Linux with a working NVIDIA driver and CUDA-capable GPU
+- **Primary distro targets:** Ubuntu 20.04/22.04/24.04 and Debian 11/12
+- **Client computers:** macOS, Windows, and Linux via SSH/API
+- **Linux roles:** BOTH remote GPU-server installation (`bootstrap.sh --remote-gpu`) and everyday local client usage
+- **macOS:** local client + development/test environment only; no NVIDIA GPU setup
+- **Windows:** first-class local client with `bootstrap.ps1`; not a Linux GPU-server target in this release
+- **AMD/Intel GPU:** no ROCm or oneAPI setup path in this release
+- **NVIDIA driver installation:** intentionally not automated because provider images and reboots vary
+- **Docker:** optional; native execution does not require Docker
+
+## Project layout
+
+```text
+gpu-rental-kit/
+├── bootstrap.sh            # macOS dev menu + Linux GPU-server entry point
+├── bootstrap.ps1           # Windows LOCAL CLIENT installer (per-platform twin)
+├── setup.sh                # Linux GPU setup orchestrator
+├── config/                 # defaults.env + models.yaml (shared conceptual config)
+├── scripts/                # detection, setup, runtime, backup, diagnostics (server)
+├── bin/                    # bash commands (server) + .ps1 Windows client twins
+├── docker/                 # optional Docker GPU files
+├── docs/                   # documentation assets
+└── test/                   # local, mock, and real remote tests
+```
+
+## Testing
+
+Run these on a development computer or Linux server:
+
+```bash
+./test/run_all.sh local
+./test/run_all.sh mock
+./test/run_all.sh all
+```
+
+`local` and `mock` do not require an NVIDIA GPU. Real GPU and remote tests require a configured remote target and are skipped honestly when none is available. The harness labels mock, real, pass, fail, and skipped results separately.
+
+Windows tooling has its own suite entry (`test/tests/test_windows_client.sh`): it structurally validates every `.ps1` file and parses them with the real PowerShell parser whenever `pwsh` is installed. Where pwsh is absent (e.g. macOS CI hosts), validation stays static and the output says so — Windows RUNTIME results are never simulated.
+
+For contribution guidance, see [CONTRIBUTING.md](CONTRIBUTING.md). For vulnerability reporting, see [SECURITY.md](SECURITY.md).
 
 ## License
 

@@ -71,7 +71,7 @@ report_out "  (suite skipped entries: ${suite_skip}; see ${SUITE_OUTPUT} for ful
 report_section "Standalone checks"
 
 # 2a. bash -n syntax over every script (independent re-check)
-syntax_bad="$(find "${KIT_ROOT}" -type f \( -name '*.sh' -o -path '*/bin/*' \) -print0 2>/dev/null \
+syntax_bad="$(find "${KIT_ROOT}" -type f \( -name '*.sh' -o -path '*/bin/*' \) ! -name '*.ps1' -print0 2>/dev/null \
     | xargs -0 -n1 bash -n 2>&1 | grep -c 'syntax error' || true)"
 if [[ "${syntax_bad}" -eq 0 ]]; then
     report_pass "bash -n over all scripts"
