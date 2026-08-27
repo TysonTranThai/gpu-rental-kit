@@ -90,7 +90,7 @@ fi
 # ── environment metadata ────────────────────────────────────────────────────
 info ""
 info "ENVIRONMENT METADATA"
-for f in /var/lib/cloud/instance /etc/cloud/cloud.cfg /etc/cloudstack /etc/ec2 /etc/ovh; do
+for f in /var/lib/cloud/instance /etc/cloud/cloud.cfg /etc/cloudstack /etc/ec2; do
     if [[ -e "${f}" ]]; then info "  marker found: ${f}"; fi
 done
 if [[ -d /var/lib/cloud ]]; then warn "  cloud-init present — typical of cloud images (durability unknown)"; fi

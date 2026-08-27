@@ -63,7 +63,7 @@ _detect_provider_hints() {
         PROVIDER_NAME="cloud-init (generic cloud image)"
     fi
     # Common provider-specific markers.
-    for marker in /etc/cloudstack /etc/ec2 /etc/ovh /etc/vultr /etc/linode; do
+    for marker in /etc/cloudstack /etc/ec2 /etc/vultr /etc/linode; do
         if [[ -e "${marker}" ]]; then
             PROVIDER_NAME="${marker}"
             break
