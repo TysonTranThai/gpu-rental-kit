@@ -101,9 +101,9 @@ That's the whole pitch. Details below.
 ### 1. Rent a GPU machine
 
 Any Linux NVIDIA GPU instance — RTX 30/40/50 series, V100, A100, H100, T4, or
-similar. The toolkit is **provider-agnostic**: it works with EZYCLOUDX,
-RunPod, Vast.ai, Lambda, or any provider that gives you SSH access to a Linux
-box with an NVIDIA GPU.
+similar. The toolkit is **provider-agnostic**: it works with RunPod, Vast.ai,
+Lambda, or any other provider that gives you SSH access to a Linux box with
+an NVIDIA GPU.
 
 ### 2. SSH in and run ONE command
 

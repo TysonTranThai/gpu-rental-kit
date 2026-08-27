@@ -62,8 +62,8 @@ _detect_provider_hints() {
     if [[ -d /var/lib/cloud ]] || [[ -f /etc/cloud/cloud.cfg ]]; then
         PROVIDER_NAME="cloud-init (generic cloud image)"
     fi
-    # Common provider-specific markers (EZYCLOUDX and similar).
-    for marker in /etc/ezcloudx /etc/ezycloudx /etc/cloudstack /etc/ec2 /etc/ovh /etc/vultr /etc/linode; do
+    # Common provider-specific markers.
+    for marker in /etc/cloudstack /etc/ec2 /etc/ovh /etc/vultr /etc/linode; do
         if [[ -e "${marker}" ]]; then
             PROVIDER_NAME="${marker}"
             break
