@@ -34,7 +34,12 @@ ensure_zstd() {
                 return 1
             fi
         fi
-        if ! ${apt_cmd} update -qq || ! ${apt_cmd} install -y -qq zstd; then
+        if [[ "${apt_cmd}" == "sudo apt-get" ]]; then
+            if ! sudo apt-get update -qq || ! sudo apt-get install -y -qq zstd; then
+                echo -e "${C_RED}[ERROR]${C_RESET} Could not install zstd with apt-get."
+                return 1
+            fi
+        elif ! apt-get update -qq || ! apt-get install -y -qq zstd; then
             echo -e "${C_RED}[ERROR]${C_RESET} Could not install zstd with apt-get."
             return 1
         fi
