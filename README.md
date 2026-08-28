@@ -325,6 +325,90 @@ What happens per backend:
 | **PyTorch** | `CUDA_VISIBLE_DEVICES` / per-device tensors | Used by the toolkit for selection and tests |
 | **Docker** | `NVIDIA_VISIBLE_DEVICES=all` or `0,1` | See `docker/compose.yml` |
 
+### Choosing GPUs automatically (`--gpus auto`)
+
+Auto mode never blindly consumes every GPU. It inspects what is running, prefers the smallest set of identical high-VRAM GPUs that fits the estimated requirement, and explains its decision:
+
+```bash
+model-run llama3-70b --gpus auto --size-gb 40
+```
+
+On a machine with 2 × RTX 3090 (24GB) + RTX 3050 (8GB) and a ~40GB model, the toolkit picks the two 3090s and tells you why:
+
+```text
+GPU system:
+  3 GPU(s) detected
+  GPU 0: NVIDIA GeForce RTX 3090 — 24GB
+  GPU 1: NVIDIA GeForce RTX 3090 — 24GB
+  GPU 2: NVIDIA GeForce RTX 3050 — 8GB
+Model estimated requirement: ~40 GB (ESTIMATE — includes headroom; not a guarantee)
+Recommended configuration: GPU 0 (NVIDIA GeForce RTX 3090, 24GB), GPU 1 (...)
+Reason: ...
+GPU 0: enabled
+GPU 1: enabled
+GPU 2: excluded — not needed — the model fits on the selected GPUs
+```
+
+Auto mode also respects work that is already running: a GPU with active compute processes (another LLM, ComfyUI, embeddings, training) is avoided when the remaining GPUs can cover the model.
+
+Sharding vs workload parallelism can be forced explicitly:
+
+```bash
+model-run M --gpus 0,1 --gpu-mode shard      # one model across both GPUs (default)
+model-run M --gpus 0,1 --gpu-mode workload   # never shard: best single GPU from the set
+```
+
+Environment-based configuration works too (used only when no explicit flag is given):
+
+```bash
+GPU_MODE=auto GPU_IDS=0,1 model-run llama3-70b --size-gb 40
+GPU_IDS=all model-run big-model              # restrict the visible GPU set
+```
+
+After launching, verify the runtime is actually using the requested GPUs:
+
+```bash
+gpu-status --expect 0,1
+```
+
+This reports REQUESTED / VISIBLE / ACTIVE GPUs and warns when a requested GPU has no compute memory allocated — a multi-GPU launch is only successful when the intended GPUs actually carry model memory.
+
+### Mixed GPUs (heterogeneous setups)
+
+**Yes — different NVIDIA GPUs in one machine are supported.** RTX 3090 + RTX 3050 (24GB + 8GB = 32GB *aggregate* VRAM) works, but think about *how* to use it:
+
+- **Strategy A — model sharding:** one model split across both GPUs. llama.cpp supports this; weight the split proportionally to VRAM (the toolkit suggests `--tensor-split 24,8`). The smaller GPU is both a memory contributor and a speed bottleneck.
+- **Strategy B — separate workloads (often better):** the RTX 3090 runs the primary model, the RTX 3050 runs embeddings / a reranker / a smaller model. Different GPUs doing different jobs avoids the bottleneck entirely.
+
+gpu-rental-kit classifies the machine automatically (`gpu-status` shows the configuration type):
+
+| Configuration | Example | Meaning |
+|---|---|---|
+| `single` | 1 × RTX 3090 | One GPU |
+| `homogeneous` | 3 × RTX 3090 | Identical GPUs |
+| `heterogeneous` | RTX 3090 + RTX 3060 | Same architecture, different VRAM/model |
+| `mixed-architecture` | RTX 3090 + RTX 4090 | Different architectures (e.g. Ampere + Ada) |
+
+Per-backend heterogeneous verdicts (shown by `model-run` when the selected GPU set is mixed):
+
+| Backend | Heterogeneous sharding | Toolkit verdict |
+|---|---|---|
+| **llama.cpp** | Layer/tensor split across different GPUs | SUPPORTED (VRAM-proportional split recommended) |
+| **Ollama** | Automatic split, no manual control | PARTIAL |
+| **vLLM** | Tensor parallelism expects identical GPUs | CAUTION — prefer llama.cpp or workload distribution |
+| **PyTorch** | Model-specific multi-GPU code | SUPPORTED (device selection) |
+| **Docker** | Exposes all/selected GPUs; backend inside decides | SUPPORTED |
+
+Verdicts reflect each backend's documented behavior. Capabilities not verified on real multi-GPU hardware are reported as NEEDS VERIFICATION rather than upgraded to SUPPORTED — see [Testing](#testing).
+
+### Benchmarking (optional)
+
+```bash
+gpu-test --bench        # micro-benchmark: per-GPU matmul GFLOPS + P2P bandwidth
+```
+
+`--bench` never runs by default. It reports raw compute and copy numbers — these are NOT language-model tokens/s and do not predict end-to-end LLM speed on their own.
+
 ### Multiple models on different GPUs (workload parallelism)
 
 One GPU per workload — no sharding involved:
@@ -487,15 +571,15 @@ These are the commands installed into `~/ai/bin` by setup:
 | Command | Purpose |
 |---|---|
 | `bootstrap.sh` | Main setup, validation, and test entry point |
-| `gpu-status` | Show GPU, driver, CUDA, and runtime status |
-| `gpu-list` | List every GPU with name, VRAM, compute capability, and PCI bus |
-| `gpu-topology` | Show GPU interconnect (NVLink/PCIe) when reported |
-| `gpu-test` | Run GPU compute checks and a light benchmark (`--multi` for multi-GPU tests) |
+| `gpu-status` | Show GPU, driver, CUDA, and runtime status (`--expect 0,1` verifies requested GPUs are actually used) |
+| `gpu-list` | List every GPU with name, VRAM, compute capability, PCI bus, and UUID |
+| `gpu-topology` | Show GPU interconnect (NVLink/PCIe) and NUMA affinity when reported |
+| `gpu-test` | Run GPU compute checks (`--multi` multi-GPU tests, `--bench` optional micro-benchmark) |
 | `model-list` | List registered model aliases and downloaded models |
 | `model-download` | Download a registered alias, Hugging Face model, or Ollama model |
-| `model-run` | Run a model using Ollama, vLLM, or llama.cpp (`--gpu N`, `--gpus all\|0,1\|auto`, `--size-gb N`, `--fit` for multi-GPU) |
+| `model-run` | Run a model using Ollama, vLLM, or llama.cpp (`--gpu N`, `--gpus all\|0,1\|auto`, `--gpu-mode shard\|workload`, `--size-gb N`, `--fit`) |
 | `model-stop` | Stop a running model process |
-| `ai-start` | Start Ollama, vLLM, or llama.cpp; no arguments opens a menu |
+| `ai-start` | Start Ollama, vLLM, or llama.cpp; GPU flags (`--gpus 0,1`, `--gpu 0`, ...) are delegated to model-run |
 | `ai-stop` | Stop the active AI runtime |
 | `ai-info` | Show AI environment information |
 | `ai-backup` | Back up configuration; `--include-models` includes model files |

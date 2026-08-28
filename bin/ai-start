@@ -130,17 +130,69 @@ show_models() {
 # =============================================================================
 # Main
 # =============================================================================
+# GPU flag delegation: any --gpu/--gpus/--gpu-mode/--size-gb/--fit flag hands
+# the launch to model-run (the single GPU-selection entry point) instead of
+# starting the runtime directly — one implementation, no duplicated logic.
 if [[ $# -ge 1 ]]; then
-    # Non-interactive mode
-    case "$1" in
+    # Non-interactive mode — split args into GPU flags vs positionals
+    GPU_FLAGS=()
+    POSITIONALS=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --gpu|--gpus|--gpu-mode|--size-gb)
+                GPU_FLAGS+=("$1" "${2:-}"); shift 2 ;;
+            --fit)
+                GPU_FLAGS+=("$1"); shift ;;
+            -h|--help|help)
+                echo "Usage: ai-start [ollama|vllm|llama] [MODEL]"
+                echo "       ai-start                    # interactive menu"
+                echo ""
+                echo "Multi-GPU options (delegated to model-run):"
+                echo "  ai-start vllm MODEL --gpus 0,1     # shard across GPUs 0,1"
+                echo "  ai-start llama MODEL --gpus all    # shard across every GPU"
+                echo "  ai-start ollama MODEL --gpu 0      # keep the model on GPU 0"
+                echo "  ai-start vllm MODEL --gpus auto --size-gb 40"
+                echo ""
+                echo "After launch, verify GPU usage: gpu-status --expect 0,1"
+                ;;
+            --)
+                shift; while [[ $# -gt 0 ]]; do POSITIONALS+=("$1"); shift; done ;;
+            *)
+                POSITIONALS+=("$1"); shift ;;
+        esac
+    done
+
+    if [[ "${#GPU_FLAGS[@]}" -gt 0 ]]; then
+        BACKEND="auto"
+        MODEL=""
+        if [[ "${#POSITIONALS[@]}" -gt 0 ]]; then
+            case "${POSITIONALS[0]}" in
+                ollama)                   BACKEND="ollama";   MODEL="${POSITIONALS[1]:-}" ;;
+                vllm)                     BACKEND="vllm";     MODEL="${POSITIONALS[1]:-}" ;;
+                llama|llamacpp|llama.cpp) BACKEND="llamacpp"; MODEL="${POSITIONALS[1]:-}" ;;
+                            *)            MODEL="${POSITIONALS[0]}" ;;
+            esac
+        fi
+        if [[ -z "${MODEL}" ]]; then
+            echo -e "${C_RED}[ERROR]${C_RESET} GPU flags given but no MODEL specified." >&2
+            echo "  Usage: ai-start [ollama|vllm|llama] MODEL --gpus all|0,1|auto" >&2
+            exit 1
+        fi
+        echo -e "${C_BOLD}[ai-start]${C_RESET} Delegating to model-run (backend: ${BACKEND})..."
+        exec "${SCRIPT_DIR}/bin/model-run" "${MODEL}" --backend "${BACKEND}" \
+            ${GPU_FLAGS[@]+"${GPU_FLAGS[@]}"}
+    fi
+
+    # No GPU flags: original dispatch on the first positional
+    case "${POSITIONALS[0]:-}" in
         ollama)
-            start_ollama "${2:-}"
+            start_ollama "${POSITIONALS[1]:-}"
             ;;
         vllm)
-            start_vllm "${2:-}"
+            start_vllm "${POSITIONALS[1]:-}"
             ;;
         llama|llamacpp|llama.cpp)
-            start_llamacpp "${2:-}"
+            start_llamacpp "${POSITIONALS[1]:-}"
             ;;
         status|gpu)
             show_gpu_status
@@ -148,12 +200,12 @@ if [[ $# -ge 1 ]]; then
         models|list)
             show_models
             ;;
-        -h|--help|help)
-            echo "Usage: ai-start [ollama|vllm|llama] [MODEL]"
-            echo "       ai-start                    # interactive menu"
+        "")
+            # Degenerate input (e.g. only "--"): re-enter interactive mode
+            exec "${BASH_SOURCE[0]}"
             ;;
         *)
-            echo -e "${C_RED}Unknown command: $1${C_RESET}"
+            echo -e "${C_RED}Unknown command: ${POSITIONALS[0]}${C_RESET}"
             echo "Usage: ai-start [ollama|vllm|llama] [MODEL]"
             exit 1
             ;;

@@ -278,11 +278,116 @@ PYEOF
 }
 
 # =============================================================================
-# run_gpu_tests — run all GPU tests. Pass --multi for deeper multi-GPU checks.
+# test_benchmark — OPTIONAL micro-benchmark (single vs multi-GPU).
+# Never run by default: gpu-test --bench. Reports honest micro-benchmark
+# numbers (matmul GFLOPS, P2P bandwidth); these are NOT LLM tokens/s.
+# =============================================================================
+test_benchmark() {
+    echo -e "${C_BOLD}[bench]${C_RESET} Running optional GPU micro-benchmark..."
+    echo "        (micro-benchmark only — NOT a language-model throughput test)"
+
+    local venv_dir="${VENV_DIR:-${AI_HOME:-${HOME}/ai}/venv}"
+    if [[ ! -f "${venv_dir}/bin/python" ]]; then
+        echo -e "  ${C_YELLOW}[SKIP]${C_RESET} PyTorch not installed — benchmark needs PyTorch."
+        return 0
+    fi
+
+    local result
+    result="$("${venv_dir}/bin/python" - <<'PYEOF'
+import sys
+try:
+    import torch, time
+    n = torch.cuda.device_count()
+    if n < 1:
+        print("SKIP: no CUDA devices")
+        sys.exit(2)
+
+    sizes = [2048, 2048, 4096]
+    per_gpu = []
+    for i in range(n):
+        torch.cuda.set_device(i)
+        dev = f"cuda:{i}"
+        a = torch.randn(2048, 2048, device=dev, dtype=torch.float16)
+        b = torch.randn(2048, 2048, device=dev, dtype=torch.float16)
+        _ = a @ b  # warmup
+        torch.cuda.synchronize(i)
+        reps, t0 = 10, time.time()
+        for _ in range(reps):
+            _ = a @ b
+        torch.cuda.synchronize(i)
+        dt = (time.time() - t0) / reps
+        gflops = (2 * 2048**3) / dt / 1e9
+        mem = torch.cuda.max_memory_allocated(i) / (1024**2)
+        torch.cuda.reset_peak_memory_stats(i)
+        per_gpu.append(f"cuda:{i}={gflops:.0f} GFLOPS fp16 ({mem:.0f}MB peak)")
+
+    lines = ["BENCH|" + " | ".join(per_gpu)]
+
+    # Multi-GPU: P2P copy bandwidth between pairs that support it
+    if n >= 2:
+        p2p = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                if torch.cuda.can_device_access_peer(i, j):
+                    src = torch.randn(64, 1024 * 1024, device=f"cuda:{i}", dtype=torch.float16)  # 128MB
+                    dst = torch.empty_like(src, device=f"cuda:{j}")
+                    torch.cuda.synchronize(i)
+                    reps, t0 = 5, time.time()
+                    for _ in range(reps):
+                        dst.copy_(src, non_blocking=True)
+                    torch.cuda.synchronize(j)
+                    dt = (time.time() - t0) / reps
+                    gbps = (src.numel() * 2) / dt / 1e9
+                    p2p.append(f"cuda:{i}->cuda:{j}={gbps:.1f} GB/s")
+                    del src, dst
+                else:
+                    p2p.append(f"cuda:{i}->cuda:{j}=no-P2P (PCIe path, skip)")
+        lines.append("P2P|" + " | ".join(p2p))
+    print("\n".join(lines))
+    sys.exit(0)
+except Exception as e:
+    print(f"FAIL: {e}")
+    sys.exit(1)
+PYEOF
+)" 2>/dev/null || true
+
+    local first="$(printf '%s' "${result}" | head -1)"
+    case "${first}" in
+        BENCH*)
+            echo -e "  ${C_GREEN}[BENCH]${C_RESET} ${first#BENCH|}"
+            local p2p_line
+            p2p_line="$(printf '%s\n' "${result}" | grep '^P2P|' || true)"
+            [[ -n "${p2p_line}" ]] && echo -e "  ${C_GREEN}[BENCH]${C_RESET} ${p2p_line#P2P|}"
+            echo "        Caveat: raw matmul/P2P numbers say little about end-to-end LLM"
+            echo "        speed; multi-GPU scaling depends on backend, model and topology."
+            return 0
+            ;;
+        SKIP*)
+            echo -e "  ${C_YELLOW}[SKIP]${C_RESET} ${first#SKIP: }"
+            return 0
+            ;;
+        *)
+            echo -e "  ${C_RED}[FAIL]${C_RESET} ${first:-no output}"
+            FAILED_TESTS+=("benchmark")
+            TEST_RESULT="FAIL"
+            return 1
+            ;;
+    esac
+}
+
+# =============================================================================
+# run_gpu_tests — run all GPU tests. --multi = deeper multi-GPU checks,
+# --bench = optional micro-benchmark (never on by default).
 # =============================================================================
 run_gpu_tests() {
-    local multi="no"
-    [[ "${1:-}" == "--multi" ]] && multi="yes"
+    local multi="no" bench="no"
+    local arg
+    for arg in "$@"; do
+        case "${arg}" in
+            --multi) multi="yes" ;;
+            --bench) bench="yes" ;;
+        esac
+    done
     echo ""
     echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
     echo -e "${C_BOLD}  GPU TEST SUITE${C_RESET}"
@@ -308,6 +413,12 @@ run_gpu_tests() {
         test_gpu_to_gpu
     fi
 
+    if [[ "${bench}" == "yes" ]]; then
+        echo ""
+        echo -e "${C_BOLD}Benchmark (optional):${C_RESET}"
+        test_benchmark
+    fi
+
     echo ""
     echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
     if [[ "${TEST_RESULT}" == "PASS" ]]; then
@@ -324,5 +435,5 @@ run_gpu_tests() {
 # Direct execution
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     AI_HOME="${AI_HOME:-${HOME}/ai}"
-    run_gpu_tests
+    run_gpu_tests "$@"
 fi

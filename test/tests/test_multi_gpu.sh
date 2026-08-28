@@ -5,7 +5,13 @@
 # Covers: all-GPU detection, per-GPU details, aggregate VRAM, topology
 # parsing (PCIe/NVLink/SYS), multi-GPU profiles, mixed-GPU warnings,
 # selection (--gpus), auto mode, fit analysis, single-GPU regression,
-# runtime flag injection, and gpu-status/gpu-list output.
+# runtime flag injection, and gpu-status/gpu-list output. Extended:
+# configuration classification (homogeneous/heterogeneous/mixed-architecture),
+# per-GPU UUID+architecture inventory, intelligent auto-selection with busy-GPU
+# exclusion and reasons, per-backend heterogeneous verdicts, VRAM-proportional
+# split recommendation, CUDA_VISIBLE_DEVICES logical/physical mapping,
+# gpu-status --expect usage verification, model-run --gpu-mode + env config,
+# ai-start GPU delegation, and gpu-test --bench SKIP path.
 # No real GPU is required or used: everything runs against test/mocks.
 # =============================================================================
 set -Eeuo pipefail
@@ -36,6 +42,17 @@ check_exit() {
     else
         FAIL=$((FAIL + 1))
         echo "  [FAIL] ${desc}: expected exit ${expected}, got ${actual}"
+    fi
+}
+
+check_absent() {
+    local desc="$1" unwanted="$2" actual="$3"
+    if [[ "${actual}" != *"${unwanted}"* ]]; then
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1))
+        echo "  [FAIL] ${desc}"
+        echo "    expected NOT to contain: ${unwanted}"
     fi
 }
 
@@ -294,6 +311,192 @@ out="$(run_in_mock rtx3090x2 - '
     bash "'"${SCRIPT_DIR}"'/bin/gpu-test" --multi 2>&1 || true
 ')"
 check "multi test: detection block present" "Checking multi-GPU detection" "${out}"
+
+echo "── GPU classification (single / homogeneous / heterogeneous / mixed-architecture) ──"
+
+classify() {
+    run_in_mock "$1" - '
+        source "'"${SCRIPT_DIR}"'/scripts/detect_gpu.sh"; run_gpu_detection
+        echo "TYPE=${GPU_CONFIG_TYPE}"
+    '
+}
+check "2x identical -> homogeneous" "TYPE=homogeneous" "$(classify rtx3090x2)"
+check "3x identical -> homogeneous" "TYPE=homogeneous" "$(classify rtx3090x3)"
+check "3090+3060 same arch -> heterogeneous" "TYPE=heterogeneous" "$(classify mixed3090_3060)"
+check "3090+4090 Ampere+Ada -> mixed-architecture" "TYPE=mixed-architecture" "$(classify mixed3090_4090)"
+check "5090+3090+3050 -> mixed-architecture" "TYPE=mixed-architecture" "$(classify mix5090_3090_3050)"
+check "1 GPU -> single" "TYPE=single" "$(classify rtx4090)"
+
+echo "── GPU inventory (UUID / architecture per GPU) ──"
+
+out="$(run_in_mock rtx3090x2 - '
+    source "'"${SCRIPT_DIR}"'/scripts/detect_gpu.sh"; run_gpu_detection
+    echo "U0=$(gpu_uuid_at 0)"
+    echo "U1=$(gpu_uuid_at 1)"
+    echo "A0=$(gpu_arch_at 0)"
+    echo "A1=$(gpu_arch_at 1)"
+')"
+check "GPU 0 UUID present" "U0=GPU-00000000" "${out}"
+check "GPU 1 UUID distinct" "U1=GPU-00000001" "${out}"
+check "GPU 0 arch Ampere" "A0=Ampere" "${out}"
+check "GPU 1 arch Ampere" "A1=Ampere" "${out}"
+
+out="$(run_in_mock mix5090_3090_3050 - '
+    source "'"${SCRIPT_DIR}"'/scripts/detect_gpu.sh"; run_gpu_detection
+    echo "A0=$(gpu_arch_at 0) A1=$(gpu_arch_at 1) A2=$(gpu_arch_at 2)"
+')"
+check "mixed archs: Blackwell + Ampere + Ampere" "A0=Blackwell A1=Ampere A2=Ampere" "${out}"
+
+echo "── intelligent auto-selection (exclusions + reasons) ──"
+
+# Flagship scenario from the spec: 2x RTX 3090 + RTX 3050, ~40GB model.
+# The two 3090s cover it; the 3050 is explicitly excluded WITH a reason.
+out="$(run_in_mock rtx3090x2 - '
+    export MOCK_EXTRA_GPU_COUNT=3
+    export MOCK_NAME_2="NVIDIA GeForce RTX 3050"
+    export MOCK_MEM_TOTAL_2="8192 MiB" MOCK_MEM_USED_2="500 MiB" MOCK_MEM_FREE_2="7692 MiB"
+    source "'"${SCRIPT_DIR}"'/scripts/gpu_select.sh"
+    mg_auto_select 40
+    echo "SEL=${MG_SELECTED}:${MG_SEL_COUNT}"
+    echo "EXCL=${MG_AUTO_EXCLUDED}"
+')"
+check "40GB on 2x3090+3050: selects 0 1" "SEL=0 1:2" "${out}"
+check "3050 excluded with reason" "2=not needed" "${out}"
+
+out="$(run_in_mock rtx3090x2 - '
+    export MOCK_COMPUTE_APPS_OVERRIDE="GPU-00000000-0000-0000-0000-000000000000, 500 MiB"
+    source "'"${SCRIPT_DIR}"'/scripts/gpu_select.sh"
+    mg_auto_select 20
+    echo "SEL=${MG_SELECTED}"
+')"
+check "busy GPU 0 avoided when GPU 1 suffices" "SEL=1" "${out}"
+
+out="$(run_in_mock mix5090_3090_3050 - '
+    source "'"${SCRIPT_DIR}"'/scripts/gpu_select.sh"
+    mg_auto_select 40 >/dev/null
+    echo "SEL=${MG_SELECTED}:${MG_SEL_COUNT}"
+')"
+check "mixed 3-GPU: 5090+3090 beat adding the 3050" "SEL=0 1:2" "${out}"
+
+out="$(run_in_mock mix5090_3090_3050 - '
+    source "'"${SCRIPT_DIR}"'/scripts/gpu_select.sh"
+    mg_auto_select 40 >/dev/null
+    mg_auto_report 40
+')"
+check "auto report explains the decision" "Reason:" "${out}"
+check "auto report lists exclusions" "excluded" "${out}"
+check "auto report marks estimate" "ESTIMATE" "${out}"
+
+echo "── heterogeneous backend verdicts + split recommendation ──"
+
+out="$(run_in_mock rtx3090x2 - '
+    source "'"${SCRIPT_DIR}"'/scripts/gpu_select.sh"
+    echo "llamacpp=$(mg_hetero_verdict llamacpp)"
+    echo "ollama=$(mg_hetero_verdict ollama)"
+    echo "vllm=$(mg_hetero_verdict vllm)"
+    echo "pytorch=$(mg_hetero_verdict pytorch)"
+    echo "docker=$(mg_hetero_verdict docker)"
+')"
+check "llama.cpp: heterogeneous SUPPORTED" "llamacpp=SUPPORTED" "${out}"
+check "ollama: heterogeneous PARTIAL" "ollama=PARTIAL" "${out}"
+check "vllm: heterogeneous CAUTION" "vllm=CAUTION" "${out}"
+check "pytorch: SUPPORTED via CVD" "pytorch=SUPPORTED" "${out}"
+check "docker: SUPPORTED via toolkit" "docker=SUPPORTED" "${out}"
+
+out="$(run_in_mock rtx3090x2 - '
+    source "'"${SCRIPT_DIR}"'/scripts/gpu_select.sh"
+    mg_hetero_verdict llamacpp >/dev/null
+    echo "R=${MGH_REASON}"
+')"
+check "verdict includes a real explanation" "R=Layer" "${out}"
+
+out="$(run_in_mock mixed3090_3060 - '
+    source "'"${SCRIPT_DIR}"'/scripts/gpu_select.sh"
+    mg_parse_gpu_spec all
+    echo "SPLIT=$(mg_recommend_split)"
+')"
+check "VRAM-proportional split 24+12" "SPLIT=24,12" "${out}"
+
+out="$(run_in_mock rtx3090x2 - '
+    source "'"${SCRIPT_DIR}"'/scripts/gpu_select.sh"
+    mg_parse_gpu_spec all
+    echo "SPLIT=$(mg_recommend_split)"
+')"
+check "equal split for identical GPUs" "SPLIT=24,24" "${out}"
+
+echo "── CUDA_VISIBLE_DEVICES mapping (logical vs physical) ──"
+
+out="$(run_in_mock rtx3090x2 - '
+    export CUDA_VISIBLE_DEVICES=1
+    source "'"${SCRIPT_DIR}"'/scripts/gpu_select.sh"
+    echo "ALLOWED=$(mg_allowed_ids | tr "\n" ",")"
+    echo "LOGICAL=$(mg_logical_of_phys 1)"
+')"
+check "CVD=1 restricts the visible set" "ALLOWED=1," "${out}"
+check "phys 1 becomes logical 0" "LOGICAL=0" "${out}"
+
+echo "── gpu-status --expect (requested vs actual usage) ──"
+
+out="$(run_in_mock rtx3090x2 - '
+    export MOCK_COMPUTE_APPS_OVERRIDE=$'"'"'GPU-00000000-0000-0000-0000-000000000000, 500 MiB\nGPU-00000001-0000-0000-0000-000000000000, 900 MiB'"'"'
+    bash "'"${SCRIPT_DIR}"'/bin/gpu-status" --expect 0,1 2>/dev/null || true
+')"
+check "verification block shown" "GPU USAGE VERIFICATION:" "${out}"
+check "requested echoed" "REQUESTED GPUs:   0,1" "${out}"
+check "both GPUs active" "ACTIVE GPUs:      0,1" "${out}"
+check "GPU 0 verified with memory" "GPU 0: OK" "${out}"
+check "GPU 1 verified with memory" "GPU 1: OK" "${out}"
+
+out="$(run_in_mock rtx3090x2 - '
+    export MOCK_COMPUTE_APPS_OVERRIDE="GPU-00000000-0000-0000-0000-000000000000, 500 MiB"
+    bash "'"${SCRIPT_DIR}"'/bin/gpu-status" --expect 0,1 2>/dev/null || true
+')"
+check "idle GPU 1 raises WARN" "GPU 1: requested but no compute memory allocated" "${out}"
+
+echo "── model-run: env config and gpu-mode collapse ──"
+
+STUB2="$(mktemp -d)"
+mkdir -p "${STUB2}/bin"
+printf '#!/bin/bash\necho "VLLM-ARGS: $* CVD=${CUDA_VISIBLE_DEVICES:-unset}"\n' > "${STUB2}/bin/vllm-serve"
+chmod +x "${STUB2}/bin/vllm-serve"
+
+out="$(run_in_mock rtx3090x2 - '
+    export AI_HOME="'"${STUB2}"'" GPU_MODE=auto GPU_IDS=0,1
+    bash "'"${SCRIPT_DIR}"'/bin/model-run" M40 --backend vllm --size-gb 40 2>/dev/null
+')"
+check "env config: auto shards across GPU_IDS" "--tensor-parallel-size 2" "${out}"
+check "env config: CVD covers both GPUs" "CVD=0,1" "${out}"
+
+out="$(run_in_mock rtx3090x2 - '
+    export AI_HOME="'"${STUB2}"'"
+    bash "'"${SCRIPT_DIR}"'/bin/model-run" M --backend vllm --gpu-mode workload --gpus 0,1 --size-gb 7 2>/dev/null
+')"
+check "workload mode collapses to one GPU" "CVD=0" "${out}"
+if [[ "${out}" == *"tensor-parallel-size"* ]]; then
+    FAIL=$((FAIL + 1)); echo "  [FAIL] workload mode must NOT inject tensor parallelism"
+else
+    PASS=$((PASS + 1))
+fi
+
+rm -rf "${STUB2}"
+
+echo "── ai-start GPU flag delegation ──"
+
+out="$(run_in_mock rtx3090x2 - '
+    bash "'"${SCRIPT_DIR}"'/bin/ai-start" vllm M --fit --size-gb 40 2>/dev/null || true
+')"
+check "ai-start delegates to model-run" "Delegating to model-run" "${out}"
+check "delegated fit analysis runs" "Single GPU:" "${out}"
+
+echo "── gpu-test --bench (no PyTorch: honest SKIP) ──"
+
+out="$(run_in_mock rtx4090 - '
+    export AI_HOME=/nonexistent-grk-test
+    bash "'"${SCRIPT_DIR}"'/bin/gpu-test" --bench 2>&1 || true
+')"
+check "bench skips without PyTorch" "benchmark needs PyTorch" "${out}"
+out="$(run_in_mock rtx4090 - 'bash "'"${SCRIPT_DIR}"'/bin/gpu-test" 2>&1 || true')"
+check_absent "bench not run by default" "Benchmark (optional)" "${out}"
 
 echo ""
 echo "════════════════════════════════════════"

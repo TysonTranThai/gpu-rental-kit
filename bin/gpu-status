@@ -2,11 +2,26 @@
 # =============================================================================
 # gpu-status — Show comprehensive GPU/system status
 # =============================================================================
+# Usage:
+#   gpu-status                 # full status
+#   gpu-status --expect 0,1    # also verify that the requested GPUs are the
+#                              # ones actually carrying compute memory (post-
+#                              # launch check for multi-GPU runs)
+# =============================================================================
 set -Eeuo pipefail
 
 AI_HOME="${AI_HOME:-${HOME}/ai}"
 C_RESET='\033[0m'; C_BOLD='\033[1m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'
 C_RED='\033[0;31m'; C_CYAN='\033[0;36m'
+
+EXPECT_IDS=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --expect)  EXPECT_IDS="${2:-}"; shift 2 ;;
+        -h|--help) echo "Usage: gpu-status [--expect GPU_IDS]"; echo "  --expect 0,1  verify the requested GPUs actually carry compute memory"; exit 0 ;;
+        *)         echo "Unknown option: $1 (see gpu-status --help)" >&2; exit 1 ;;
+    esac
+done
 
 echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
 echo -e "${C_BOLD}  GPU STATUS${C_RESET}"
@@ -35,6 +50,10 @@ if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
             "$(nvidia-smi -i "${i}" --query-gpu=memory.used --format=csv,noheader 2>/dev/null | head -1)" \
             "$(nvidia-smi -i "${i}" --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -1)"
         printf "    UTILIZATION:    %s\n" "$(nvidia-smi -i "${i}" --query-gpu=utilization.gpu --format=csv,noheader 2>/dev/null | head -1)"
+        printf "    TEMPERATURE:    %s\n" "$(nvidia-smi -i "${i}" --query-gpu=temperature.gpu --format=csv,noheader 2>/dev/null | head -1)"
+        printf "    POWER:          %s\n" "$(nvidia-smi -i "${i}" --query-gpu=power.draw --format=csv,noheader 2>/dev/null | head -1)"
+        gpu_uuid="$(nvidia-smi -i "${i}" --query-gpu=uuid --format=csv,noheader 2>/dev/null | head -1)"
+        [[ -n "${gpu_uuid}" ]] && printf "    UUID:           %s\n" "${gpu_uuid}"
         i=$((i + 1))
     done
 
@@ -47,7 +66,9 @@ if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
     compute_apps="$(nvidia-smi --query-compute-apps=gpu_uuid,used_memory --format=csv,noheader 2>/dev/null || true)"
     if [[ -n "${compute_apps}" ]]; then
         busy="$(nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader 2>/dev/null \
+            | cut -d',' -f1 | tr -d ' ' \
             | while IFS= read -r uuid; do \
+                [[ -z "${uuid}" ]] && continue; \
                 nvidia-smi -L 2>/dev/null | grep "UUID: ${uuid})" | sed 's/^GPU \([0-9]*\):.*/\1/'; \
               done | sort -u | tr '\n' ',' | sed 's/,$//')"
         if [[ -n "${busy}" ]]; then
@@ -61,9 +82,44 @@ if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
     else
         echo -e "  MODE:             ${C_BOLD}SINGLE-GPU${C_RESET}"
     fi
+
+    # --- Requested vs actual GPU usage verification (--expect) ---
+    if [[ -n "${EXPECT_IDS}" ]]; then
+        echo -e "${C_BOLD}GPU USAGE VERIFICATION:${C_RESET}"
+        printf "  REQUESTED GPUs:   %s\n" "${EXPECT_IDS}"
+        visible="$(nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null | tr '\n' ',' | sed 's/,$//')"
+        printf "  VISIBLE GPUs:     %s\n" "${visible:-none}"
+        # Map compute-app UUIDs to GPU indices
+        active=""
+        while IFS= read -r app_uuid; do
+            [[ -z "${app_uuid}" ]] && continue
+            idx="$(nvidia-smi -L 2>/dev/null | grep "UUID: ${app_uuid})" | sed 's/^GPU \([0-9]*\):.*/\1/' | head -1)"
+            if [[ -n "${idx}" ]] && ! echo ",${active}," | grep -q ",${idx},"; then
+                active="${active:+${active},}${idx}"
+            fi
+        done < <(nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader 2>/dev/null | cut -d',' -f1 | tr -d ' ')
+        printf "  ACTIVE GPUs:      %s\n" "${active:-none}"
+        IFS=',' read -r -a _expect_list <<< "${EXPECT_IDS}"
+        for e in "${_expect_list[@]}"; do
+            e="$(echo "${e}" | tr -d ' ')"
+            [[ -z "${e}" ]] && continue
+            if ! echo ",${visible}," | grep -q ",${e},"; then
+                echo -e "  ${C_YELLOW}[WARN]${C_RESET} GPU ${e}: requested but NOT visible."
+            elif echo ",${active}," | grep -q ",${e},"; then
+                mem="$(nvidia-smi -i "${e}" --query-gpu=memory.used --format=csv,noheader 2>/dev/null | head -1)"
+                echo "  GPU ${e}: OK — ${mem} allocated"
+            else
+                echo -e "  ${C_YELLOW}[WARN]${C_RESET} GPU ${e}: requested but no compute memory allocated — the runtime may not be using this GPU."
+            fi
+        done
+        echo ""
+    fi
 else
     printf "  GPU:              ${C_RED}NOT DETECTED${C_RESET}\n"
     printf "  (nvidia-smi not available)\n"
+    if [[ -n "${EXPECT_IDS}" ]]; then
+        echo -e "  ${C_YELLOW}[WARN]${C_RESET} Cannot verify --expect ${EXPECT_IDS}: no nvidia-smi."
+    fi
 fi
 echo ""
 

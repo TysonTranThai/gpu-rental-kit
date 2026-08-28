@@ -3,8 +3,10 @@
 # gpu-test — Run GPU compute tests and lightweight benchmark
 # =============================================================================
 # Usage:
-#   gpu-test           # standard tests (single-GPU safe)
-#   gpu-test --multi   # deeper multi-GPU tests (detection, per-GPU CUDA, P2P)
+#   gpu-test            # standard tests (single-GPU safe)
+#   gpu-test --multi    # deeper multi-GPU tests (detection, per-GPU CUDA, P2P)
+#   gpu-test --bench    # optional micro-benchmark (matmul GFLOPS, P2P bandwidth)
+#   gpu-test --multi --bench
 # =============================================================================
 set -Eeuo pipefail
 
@@ -12,10 +14,22 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AI_HOME="${AI_HOME:-${HOME}/ai}"
 
-GPU_TEST_FLAG=""
-if [[ "${1:-}" == "--multi" ]]; then
-    GPU_TEST_FLAG="--multi"
-fi
+GPU_TEST_FLAGS=()
+for arg in "$@"; do
+    case "${arg}" in
+        --multi|--bench) GPU_TEST_FLAGS+=("${arg}") ;;
+        -h|--help)
+            echo "Usage: gpu-test [--multi] [--bench]"
+            echo "  --multi   deeper multi-GPU checks (detection, per-GPU CUDA, P2P)"
+            echo "  --bench   optional micro-benchmark (NOT run by default)"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: ${arg} (try --help)" >&2
+            exit 1
+            ;;
+    esac
+done
 
 # Source detection scripts
 # shellcheck source=scripts/detect_gpu.sh
@@ -26,7 +40,7 @@ source "${SCRIPT_DIR}/scripts/test_gpu.sh"
 # Run detection first
 run_gpu_detection
 
-# Run tests
-run_gpu_tests "${GPU_TEST_FLAG}"
+# Run tests (guard: empty-array expansion fails on bash 3.2 under set -u)
+run_gpu_tests ${GPU_TEST_FLAGS[@]+"${GPU_TEST_FLAGS[@]}"}
 
 exit $?

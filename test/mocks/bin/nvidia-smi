@@ -12,6 +12,8 @@
 # Per-GPU overrides: MOCK_<FIELD>_<INDEX> wins over the profile value, e.g.
 #   MOCK_NAME_1="NVIDIA Tesla T4"  MOCK_MEM_TOTAL_1="16384 MiB"
 # MOCK_EXTRA_GPU_COUNT overrides the profile's MOCK_GPU_COUNT (used by tests).
+# MOCK_COMPUTE_APPS_OVERRIDE overrides the profile's MOCK_COMPUTE_APPS
+# (profiles assign the variable, so env alone cannot override it).
 # =============================================================================
 set -Eeuo pipefail
 
@@ -28,6 +30,8 @@ fi
 source "${PROFILE_FILE}"
 # MOCK_EXTRA_GPU_COUNT overrides the profile's MOCK_GPU_COUNT (used by tests)
 MOCK_GPU_COUNT="${MOCK_EXTRA_GPU_COUNT:-${MOCK_GPU_COUNT:-1}}"
+# MOCK_COMPUTE_APPS_OVERRIDE overrides the profile's MOCK_COMPUTE_APPS
+MOCK_COMPUTE_APPS="${MOCK_COMPUTE_APPS_OVERRIDE:-${MOCK_COMPUTE_APPS:-}}"
 
 # gpu_val <FIELD_BASENAME> <index> — per-GPU value with per-index override
 gpu_val() {
