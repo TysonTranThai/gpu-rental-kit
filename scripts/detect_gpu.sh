@@ -37,6 +37,7 @@ GPU_MIXED_WARNING="no"       # yes when GPUs differ in model name or VRAM size
 GPU_TOPOLOGY_AVAILABLE="no"
 GPU_TOPOLOGY_RAW=""         # full `nvidia-smi topo -m` table (when available)
 GPU_TOPOLOGY_LINKS=""       # lines like "GPU0 <-> GPU1: PCIe"
+GPU_NUMA_LIST=""            # one entry per GPU: NUMA node or "N/A"
 
 # =============================================================================
 # detect_nvidia_gpu — detect GPU via nvidia-smi, lspci, or other means
@@ -245,13 +246,14 @@ detect_gpu_topology() {
     GPU_TOPOLOGY_AVAILABLE="no"
     GPU_TOPOLOGY_RAW=""
     GPU_TOPOLOGY_LINKS=""
+    GPU_NUMA_LIST=""
 
     command -v nvidia-smi &>/dev/null || { export GPU_TOPOLOGY_AVAILABLE GPU_TOPOLOGY_RAW GPU_TOPOLOGY_LINKS; return 0; }
     GPU_TOPOLOGY_RAW="$(nvidia-smi topo -m 2>/dev/null || true)"
     [[ -z "${GPU_TOPOLOGY_RAW}" ]] && { export GPU_TOPOLOGY_AVAILABLE GPU_TOPOLOGY_RAW GPU_TOPOLOGY_LINKS; return 0; }
     GPU_TOPOLOGY_AVAILABLE="yes"
 
-    local line row_idx tokens n=${GPU_COUNT} j cell link_type sep=""
+    local line row_idx tokens n=${GPU_COUNT} j cell link_type sep="" topo_sep=""
     while IFS= read -r line; do
         [[ "${line}" =~ ^GPU[0-9]+[[:space:]] ]] || continue
         row_idx="$(echo "${line}" | sed 's/^GPU\([0-9]*\).*$/\1/')"
@@ -269,10 +271,19 @@ detect_gpu_topology() {
             GPU_TOPOLOGY_LINKS="${GPU_TOPOLOGY_LINKS}${sep}GPU${j} <-> GPU${row_idx}: ${link_type}"
             sep=$'\n'
         done
+        # NUMA affinity is the LAST column of the row (after CPU Affinity)
+        local numa
+        numa="${tokens[${#tokens[@]} - 1]:-N/A}"
+        [[ -z "${numa}" ]] && numa="N/A"
+        GPU_NUMA_LIST="${GPU_NUMA_LIST}${topo_sep}${numa}"
+        topo_sep="|"
     done <<< "${GPU_TOPOLOGY_RAW}"
 
-    export GPU_TOPOLOGY_AVAILABLE GPU_TOPOLOGY_RAW GPU_TOPOLOGY_LINKS
+    export GPU_TOPOLOGY_AVAILABLE GPU_TOPOLOGY_RAW GPU_TOPOLOGY_LINKS GPU_NUMA_LIST
 }
+
+# gpu_numa_at <i> — NUMA node for GPU i ("N/A" when unavailable)
+gpu_numa_at() { echo "${GPU_NUMA_LIST}" | cut -d'|' -f"$(( $1 + 1 ))"; }
 
 # gpu_link_type <a> <b> — print NVLink/PCIe/unknown for a GPU pair
 gpu_link_type() {

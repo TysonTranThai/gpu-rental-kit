@@ -131,9 +131,13 @@ out="$(run_in_mock rtx3090x4 quad_sys.txt '
     source "'"${SCRIPT_DIR}"'/scripts/detect_gpu.sh"; run_gpu_detection
     echo "A=$(gpu_link_type 0 1)"
     echo "B=$(gpu_link_type 0 2)"
+    echo "N2=$(gpu_numa_at 2)"
+    echo "N0=$(gpu_numa_at 0)"
 ')"
 check "4-GPU matrix upper triangle" "A=PCIe" "${out}"
 check "4-GPU second pair" "B=PCIe" "${out}"
+check "NUMA parsed when reported" "N2=0" "${out}"
+check "NUMA N/A stays honest" "N0=N/A" "${out}"
 
 echo "── gpu_select.sh: selection and auto ──"
 
@@ -248,6 +252,12 @@ out="$(run_in_mock rtx3090x2 nvlink2.txt '
 check "topology: NVLink reported" "NVLink detected" "${out}"
 check "topology: honest perf note" "does NOT guarantee 2 GPUs = 2x speed" "${out}"
 
+out="$(run_in_mock rtx3090x4 quad_sys.txt '
+    bash "'"${SCRIPT_DIR}"'/bin/gpu-topology"
+')"
+check "topology: NUMA section when reported" "NUMA affinity:" "${out}"
+check "topology: NUMA node value" "GPU 2: NUMA node 0" "${out}"
+
 echo "── gpu-status multi-GPU block ──"
 
 out="$(run_in_mock rtx3090x2 - '
@@ -260,6 +270,23 @@ out="$(run_in_mock rtx4090 - '
     bash "'"${SCRIPT_DIR}"'/bin/gpu-status" 2>/dev/null || true
 ')"
 check "single status: SINGLE-GPU mode" "SINGLE-GPU" "${out}"
+
+echo "── Windows client twins ──"
+
+for ps1cmd in gpu-list gpu-topology; do
+    if [[ -f "${SCRIPT_DIR}/bin/${ps1cmd}.ps1" ]]; then
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1))
+        echo "  [FAIL] bin/${ps1cmd}.ps1 missing"
+    fi
+done
+out="$(cat "${SCRIPT_DIR}/bin/gpu-list.ps1" 2>/dev/null || echo "")"
+check "gpu-list.ps1 honestly labeled REMOTE" "REMOTE" "${out}"
+out="$(cat "${SCRIPT_DIR}/bin/gpu-topology.ps1" 2>/dev/null || echo "")"
+check "gpu-topology.ps1 uses remote lib" "Invoke-GrkRemoteCommand" "${out}"
+out="$( { grep -rn "mg_verify_selection" "${SCRIPT_DIR}/scripts/" 2>/dev/null || true; } | wc -l | tr -d ' ')"
+check "no dead verify helper left" "0" "${out}"
 
 echo "── gpu-test --multi on mock (no PyTorch: SKIP paths) ──"
 

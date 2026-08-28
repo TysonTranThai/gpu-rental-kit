@@ -32,6 +32,23 @@ if [[ "${GPU_COUNT}" -gt 1 ]]; then
     echo "GPU-to-GPU links:"
     echo "${GPU_TOPOLOGY_LINKS}" | sed 's/^/  /'
     echo ""
+    # NUMA affinity, when the platform reports it
+    numa_known="no"
+    i=0
+    while [[ "${i}" -lt "${GPU_COUNT}" ]]; do
+        [[ "$(gpu_numa_at "${i}")" != "N/A" ]] && numa_known="yes"
+        i=$((i + 1))
+    done
+    if [[ "${numa_known}" == "yes" ]]; then
+        echo "NUMA affinity:"
+        i=0
+        while [[ "${i}" -lt "${GPU_COUNT}" ]]; do
+            echo "  GPU ${i}: NUMA node $(gpu_numa_at "${i}")"
+            i=$((i + 1))
+        done
+        echo "  (GPUs on different NUMA nodes have higher cross-node latency)"
+        echo ""
+    fi
     if echo "${GPU_TOPOLOGY_LINKS}" | grep -q "NVLink"; then
         echo "NVLink detected: GPU-to-GPU bandwidth is much higher than PCIe."
     else
