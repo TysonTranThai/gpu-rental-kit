@@ -1,4 +1,10 @@
 <p align="center">
+  🇬🇧 <a href="README.md">English</a> &nbsp;|&nbsp; 🇻🇳 <a href="README.vi.md">Tiếng Việt</a> &nbsp;|&nbsp; 🇨🇳 <a href="README.zh-CN.md">中文</a>
+</p>
+
+---
+
+<p align="center">
   <img src="docs/logo.svg" width="110" alt="GPU Rental Kit logo" />
 </p>
 
@@ -19,9 +25,11 @@
 > [!IMPORTANT]
 > **BETA — Windows client support is NOT yet tested on real Windows hardware.**
 > Validated statically only; runtime testing pending.
-> macOS/Linux server workflows are stable ([v1.0.1](https://github.com/TysonTranThai/gpu-rental-kit/releases/tag/v1.0.1)).
+> macOS/Linux server workflows are stable ([v1.3.0](https://github.com/TysonTranThai/gpu-rental-kit/releases/tag/v1.3.0)).
 
 > **The simple idea:** the rented GPU server runs the model. Your own computer—Mac, Windows PC, or Linux machine—connects to that server. **Your personal computer does not need an NVIDIA GPU.**
+
+> **The workflow: RENT → INSTALL → TEST → RUN.** Rent a Linux GPU VM, install everything with a few commands, verify the machine, and start running models.
 
 ## What is gpu-rental-kit?
 
@@ -779,6 +787,22 @@ Run these on a development computer or Linux server:
 Windows tooling has its own suite entry (`test/tests/test_windows_client.sh`): it structurally validates every `.ps1` file and parses them with the real PowerShell parser whenever `pwsh` is installed. Where pwsh is absent (e.g. macOS CI hosts), validation stays static and the output says so — Windows RUNTIME results are never simulated.
 
 For contribution guidance, see [CONTRIBUTING.md](CONTRIBUTING.md). For vulnerability reporting, see [SECURITY.md](SECURITY.md).
+
+## Contributing
+
+Contributions are welcome — bug fixes, new mock GPU profiles, provider setup notes, and documentation improvements all help. The project values simplicity, honesty, and portability.
+
+1. Fork the repository and create a feature branch.
+2. Make your changes, keeping them focused and well-tested.
+3. Run the test suite before submitting:
+
+   ```bash
+   ./test/run_all.sh all
+   ```
+
+4. Open a pull request describing what changed and why.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide, including the pull request checklist.
 
 ## License
 
