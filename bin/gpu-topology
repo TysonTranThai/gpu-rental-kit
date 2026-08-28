@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# =============================================================================
+# gpu-topology — Show GPU interconnect topology (NVLink / PCIe) when available
+# =============================================================================
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/detect_gpu.sh
+source "${SCRIPT_DIR}/scripts/detect_gpu.sh"
+
+run_gpu_detection
+
+if [[ "${HAS_NVIDIA_GPU}" != "yes" ]]; then
+    echo "No NVIDIA GPUs detected."
+    exit 1
+fi
+
+echo "GPU COUNT: ${GPU_COUNT}"
+echo ""
+
+if [[ "${GPU_TOPOLOGY_AVAILABLE}" != "yes" ]]; then
+    echo "Topology information is not available (nvidia-smi topo failed or unsupported)."
+    echo "This is normal on some cloud/rental instances."
+    exit 0
+fi
+
+echo "Topology matrix (nvidia-smi topo -m):"
+echo "${GPU_TOPOLOGY_RAW}" | sed 's/^/  /'
+echo ""
+
+if [[ "${GPU_COUNT}" -gt 1 ]]; then
+    echo "GPU-to-GPU links:"
+    echo "${GPU_TOPOLOGY_LINKS}" | sed 's/^/  /'
+    echo ""
+    if echo "${GPU_TOPOLOGY_LINKS}" | grep -q "NVLink"; then
+        echo "NVLink detected: GPU-to-GPU bandwidth is much higher than PCIe."
+    else
+        echo "No NVLink detected: multi-GPU sharding traffic travels over PCIe,"
+        echo "which is slower. Tensor-parallel speedups will be more modest."
+    fi
+    echo "Performance note: multi-GPU does NOT guarantee 2 GPUs = 2x speed."
+fi

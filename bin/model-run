@@ -2,6 +2,22 @@
 # =============================================================================
 # model-run — Run a downloaded model (interactive or server)
 # =============================================================================
+# GPU selection:
+#   --gpu 0            use exactly GPU 0 (workload parallelism: one GPU per model)
+#   --gpus all         shard across every visible GPU (one big model)
+#   --gpus 0,1         shard across the listed GPUs
+#   --gpus auto        pick automatically from --size-gb (default: single GPU)
+#   --size-gb N        estimated model size in GB (used by auto and --fit)
+#   --fit              show single- vs multi-GPU fit analysis and exit
+#
+# Notes:
+#   * Default is ONE GPU. Multi-GPU is never enabled unless you ask for it.
+#   * "Multiple GPUs for one model" = sharding (llama.cpp layer split,
+#     vLLM tensor parallelism). "One GPU per model" = workload parallelism
+#     (launch each model with its own --gpu N).
+#   * Aggregate VRAM is the sum of separate GPUs — it is NOT pooled into one
+#     big GPU. The backend decides how memory is actually used.
+# =============================================================================
 set -Eeuo pipefail
 
 AI_HOME="${AI_HOME:-${HOME}/ai}"
@@ -11,28 +27,122 @@ MODELS_DIR="${AI_MODELS_DIR:-${AI_HOME}/models}"
 C_RESET='\033[0m'; C_BOLD='\033[1m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'; C_RED='\033[0;31m'; C_CYAN='\033[0;36m'
 
 usage() {
-    echo "Usage: model-run <MODEL> [--backend ollama|vllm|llamacpp]"
+    echo "Usage: model-run <MODEL> [options]"
+    echo ""
+    echo "Options:"
+    echo "  --backend ollama|vllm|llamacpp   Force backend (default: auto-detect)"
+    echo "  --gpu N                          Use GPU N only (one model per GPU)"
+    echo "  --gpus all|auto|0,1              Multi-GPU selection (sharding)"
+    echo "  --size-gb N                      Estimated model size in GB (for auto/--fit)"
+    echo "  --fit                            Show fit analysis and exit"
     echo ""
     echo "Examples:"
-    echo "  model-run llama3.1:8b            # auto-detect (ollama)"
+    echo "  model-run llama3.1:8b                          # auto-detect (ollama)"
     echo "  model-run Qwen/Qwen2.5-7B-Instruct --backend vllm"
     echo "  model-run llama3-8b-gguf --backend llamacpp"
+    echo "  model-run big-model --gpus all                 # shard across all GPUs"
+    echo "  model-run big-model --gpus 0,1                 # shard across GPUs 0 and 1"
+    echo "  model-run model-a --gpu 0                      # model-a on GPU 0"
+    echo "  model-run model-b --gpu 1                      # model-b on GPU 1 (parallel workload)"
+    echo "  model-run llama3-70b --gpus auto --size-gb 40  # auto-select from size"
+    echo "  model-run llama3-70b --fit --size-gb 40        # fit analysis only"
     exit 1
 }
 
-MODEL="${1:-}"
-if [[ -z "${MODEL}" ]]; then
-    usage
-fi
-shift || true
-
+MODEL=""
 BACKEND="auto"
+GPU_SPEC=""        # value of --gpus
+GPU_SINGLE=""      # value of --gpu
+SIZE_GB=""
+FIT_ONLY="no"
+PASSTHROUGH_ARGS=()
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --backend) BACKEND="$2"; shift 2 ;;
-        *) shift ;;
+        --gpu)     GPU_SINGLE="$2"; shift 2 ;;
+        --gpus)    GPU_SPEC="$2"; shift 2 ;;
+        --size-gb) SIZE_GB="$2"; shift 2 ;;
+        --fit)     FIT_ONLY="yes"; shift ;;
+        -h|--help) usage ;;
+        --) shift; PASSTHROUGH_ARGS=("$@"); break ;;
+        *)
+            if [[ -z "${MODEL}" ]]; then
+                MODEL="$1"
+            else
+                PASSTHROUGH_ARGS+=("$1")
+            fi
+            shift
+            ;;
     esac
 done
+
+[[ -z "${MODEL}" ]] && usage
+
+# =============================================================================
+# GPU selection
+# =============================================================================
+if [[ -n "${GPU_SINGLE}" && -n "${GPU_SPEC}" ]]; then
+    echo -e "${C_RED}[ERROR]${C_RESET} --gpu and --gpus are mutually exclusive." >&2
+    exit 1
+fi
+
+if [[ -n "${GPU_SINGLE}" || -n "${GPU_SPEC}" || -n "${SIZE_GB}" ]]; then
+    # shellcheck source=scripts/gpu_select.sh
+    source "${SCRIPT_DIR}/scripts/gpu_select.sh"
+fi
+
+if [[ "${FIT_ONLY}" == "yes" ]]; then
+    [[ -z "${SIZE_GB}" ]] && { echo -e "${C_RED}[ERROR]${C_RESET} --fit requires --size-gb." >&2; exit 1; }
+    source "${SCRIPT_DIR}/scripts/gpu_select.sh"
+    echo -e "${C_BOLD}[fit]${C_RESET} Model fit analysis:"
+    echo ""
+    mg_model_fit "${SIZE_GB}" || true
+    echo ""
+    echo "Aggregate VRAM is NOT pooled: using it requires a sharding-capable"
+    echo "backend (llama.cpp layer split, vLLM tensor parallelism)."
+    exit 0
+fi
+
+GPU_ARGS=()
+if [[ -n "${GPU_SINGLE}" ]]; then
+    # Workload parallelism: exactly one GPU
+    mg_parse_gpu_spec "${GPU_SINGLE}" || exit 1
+    MG_SEL_COUNT=1
+    GPU_ARGS=("${MG_SELECTED}")
+elif [[ -n "${GPU_SPEC}" ]]; then
+    if [[ "${GPU_SPEC}" == "auto" ]]; then
+        mg_resolve_auto "${SIZE_GB:--}"
+    else
+        mg_parse_gpu_spec "${GPU_SPEC}" || exit 1
+        MG_AUTO_REASON="Manual multi-GPU selection."
+    fi
+    # shellcheck disable=SC2206  # intentional word-split of "0 1"
+    GPU_ARGS=(${MG_SELECTED})
+
+    echo -e "${C_BOLD}[gpu]${C_RESET} Selection: $(mg_select_summary)"
+    echo -e "${C_BOLD}[gpu]${C_RESET} ${MG_AUTO_REASON}"
+    if [[ "${MG_SEL_COUNT}" -gt 1 ]]; then
+        if [[ "${GPU_MIXED_WARNING:-no}" == "yes" ]]; then
+            echo -e "${C_YELLOW}[warn]${C_RESET} Mixed GPUs: the slower/smaller GPU can become the bottleneck."
+        fi
+        echo -e "${C_BOLD}[gpu]${C_RESET} Aggregate VRAM: ${GPU_TOTAL_VRAM_GB} GB across ${MG_SEL_COUNT} GPUs (NOT one pooled GPU)."
+        echo -e "${C_BOLD}[gpu]${C_RESET} Sharding depends on the backend; multi-GPU is not always 2x faster."
+    fi
+fi
+
+# CUDA_VISIBLE_DEVICES restricts which GPUs the backend sees.
+# We NEVER widen an existing CUDA_VISIBLE_DEVICES.
+if [[ "${#GPU_ARGS[@]}" -gt 0 ]]; then
+    if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+        echo -e "${C_BOLD}[gpu]${C_RESET} CUDA_VISIBLE_DEVICES already set ('${CUDA_VISIBLE_DEVICES}') — respecting it as-is."
+    else
+        export CUDA_VISIBLE_DEVICES="$(echo "${GPU_ARGS[*]}" | tr ' ' ',')"
+        echo -e "${C_BOLD}[gpu]${C_RESET} CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
+    fi
+fi
+# Marks GPU_ARGS as populated for bash 3.2 set -u; harmless otherwise
+GPU_ARGS=("${GPU_ARGS[@]+${GPU_ARGS[@]}}")
 
 # =============================================================================
 # Determine backend if auto
@@ -69,16 +179,25 @@ case "${BACKEND}" in
             echo -e "${C_RED}[ERROR]${C_RESET} Ollama not installed."
             exit 1
         fi
+        if [[ "${#GPU_ARGS[@]}" -gt 1 ]]; then
+            echo -e "${C_BOLD}[gpu]${C_RESET} Ollama splits large models across visible GPUs automatically."
+        fi
         exec ollama run "${MODEL}"
         ;;
 
     vllm)
         model_path="${MODELS_DIR}/$(echo "${MODEL}" | tr '/' '_')"
+        serve_args=()
+        # Tensor parallelism when sharding across >1 GPU (unless user set it)
+        if [[ "${#GPU_ARGS[@]}" -gt 1 ]] && ! mg_has_tp_arg ${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}; then
+            serve_args+=(--tensor-parallel-size "${#GPU_ARGS[@]}")
+            echo -e "${C_BOLD}[gpu]${C_RESET} vLLM tensor parallelism: --tensor-parallel-size ${#GPU_ARGS[@]}"
+        fi
         if [[ -d "${model_path}" ]]; then
-            exec "${AI_HOME}/bin/vllm-serve" "${model_path}" "$@"
+            exec "${AI_HOME}/bin/vllm-serve" "${model_path}" ${serve_args[@]+"${serve_args[@]}"} ${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}
         else
             # Not downloaded — use HF ID directly
-            exec "${AI_HOME}/bin/vllm-serve" "${MODEL}" "$@"
+            exec "${AI_HOME}/bin/vllm-serve" "${MODEL}" ${serve_args[@]+"${serve_args[@]}"} ${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}
         fi
         ;;
 
@@ -89,7 +208,10 @@ case "${BACKEND}" in
             echo "  Download first: model-download ${MODEL}"
             exit 1
         fi
-        exec "${AI_HOME}/bin/llamacpp-serve" "${gguf_file}" "$@"
+        if [[ "${#GPU_ARGS[@]}" -gt 1 ]]; then
+            echo -e "${C_BOLD}[gpu]${C_RESET} llama.cpp splits layers across visible GPUs automatically."
+        fi
+        exec "${AI_HOME}/bin/llamacpp-serve" "${gguf_file}" ${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}
         ;;
 
     *)

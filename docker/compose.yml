@@ -3,6 +3,13 @@
 # =============================================================================
 # Optional: run the AI runtime in Docker with GPU passthrough.
 #   docker compose -f docker/compose.yml up -d
+#
+# GPU selection (no Docker-in-Docker required — this runs ON the GPU host):
+#   all GPUs (default):   NVIDIA_VISIBLE_DEVICES=all docker compose ... up -d
+#   selected GPUs:        NVIDIA_VISIBLE_DEVICES=0,1 docker compose ... up -d
+#
+# After startup, verify inside the container that the expected GPUs are visible:
+#   docker exec gpu-ai-runtime nvidia-smi -L
 # =============================================================================
 
 services:
@@ -13,7 +20,7 @@ services:
     container_name: ollama
     runtime: nvidia
     environment:
-      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - OLLAMA_HOST=0.0.0.0:11434
       - OLLAMA_KEEP_ALIVE=5m
     ports:
@@ -32,7 +39,7 @@ services:
     container_name: gpu-ai-runtime
     runtime: nvidia
     environment:
-      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
       - HF_HOME=/ai/cache/huggingface
     volumes:
       - ../ai/models:/ai/models

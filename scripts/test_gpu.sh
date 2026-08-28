@@ -150,9 +150,139 @@ test_gpu_memory() {
 }
 
 # =============================================================================
-# run_gpu_tests — run all GPU tests
+# test_multi_gpu_detection — verify all GPUs are visible and listed
+# =============================================================================
+test_multi_gpu_detection() {
+    echo -e "${C_BOLD}[test]${C_RESET} Checking multi-GPU detection..."
+
+    if [[ "${GPU_COUNT:-0}" -lt 2 ]]; then
+        echo -e "  ${C_YELLOW}[SKIP]${C_RESET} Only ${GPU_COUNT:-0} GPU(s) present — nothing multi-GPU to test."
+        return 0
+    fi
+
+    if [[ "$(echo "${GPU_NAMES_LIST}" | tr '|' '\n' | grep -c . )" -eq "${GPU_COUNT}" ]] \
+       && [[ "${GPU_TOTAL_VRAM_MB}" -gt 0 ]]; then
+        echo -e "  ${C_GREEN}[PASS]${C_RESET} ${GPU_COUNT} GPUs detected; aggregate VRAM ${GPU_TOTAL_VRAM_GB} GB"
+        return 0
+    else
+        echo -e "  ${C_RED}[FAIL]${C_RESET} GPU list incomplete (count=${GPU_COUNT}, total=${GPU_TOTAL_VRAM_MB}MB)"
+        FAILED_TESTS+=("multi-gpu-detection")
+        TEST_RESULT="FAIL"
+        return 1
+    fi
+}
+
+# =============================================================================
+# test_multi_gpu_cuda — tiny matmul on EVERY GPU via PyTorch (cheap)
+# =============================================================================
+test_multi_gpu_cuda() {
+    echo -e "${C_BOLD}[test]${C_RESET} Checking CUDA on every GPU..."
+
+    local venv_dir="${VENV_DIR:-${AI_HOME:-${HOME}/ai}/venv}"
+    if [[ ! -f "${venv_dir}/bin/python" ]]; then
+        echo -e "  ${C_YELLOW}[SKIP]${C_RESET} PyTorch not installed."
+        return 0
+    fi
+
+    local result
+    result="$("${venv_dir}/bin/python" - <<'PYEOF'
+import sys
+try:
+    import torch
+    n = torch.cuda.device_count()
+    if n < 2:
+        print(f"SKIP: only {n} CUDA device(s) visible to PyTorch")
+        sys.exit(2)
+    ok = []
+    for i in range(n):
+        a = torch.ones(64, 64, device=f"cuda:{i}")
+        b = a @ a
+        torch.cuda.synchronize(i)
+        ok.append(f"cuda:{i}={torch.cuda.get_device_name(i)}")
+    print("PASS: " + " | ".join(ok))
+    sys.exit(0)
+except Exception as e:
+    print(f"FAIL: {e}")
+    sys.exit(1)
+PYEOF
+)" 2>/dev/null || true
+
+    case "${result}" in
+        PASS*)
+            echo -e "  ${C_GREEN}[PASS]${C_RESET} ${result#PASS: }"
+            return 0
+            ;;
+        SKIP*)
+            echo -e "  ${C_YELLOW}[SKIP]${C_RESET} ${result#SKIP: }"
+            return 0
+            ;;
+        *)
+            echo -e "  ${C_RED}[FAIL]${C_RESET} ${result:-no output}"
+            FAILED_TESTS+=("multi-gpu-cuda")
+            TEST_RESULT="FAIL"
+            return 1
+            ;;
+    esac
+}
+
+# =============================================================================
+# test_gpu_to_gpu — check P2P connectivity (report-only, no benchmark)
+# =============================================================================
+test_gpu_to_gpu() {
+    echo -e "${C_BOLD}[test]${C_RESET} Checking GPU-to-GPU communication capability..."
+
+    if [[ "${GPU_COUNT:-0}" -lt 2 ]]; then
+        echo -e "  ${C_YELLOW}[SKIP]${C_RESET} Single GPU."
+        return 0
+    fi
+
+    local venv_dir="${VENV_DIR:-${AI_HOME:-${HOME}/ai}/venv}"
+    if [[ ! -f "${venv_dir}/bin/python" ]]; then
+        echo -e "  ${C_YELLOW}[SKIP]${C_RESET} PyTorch not installed."
+        return 0
+    fi
+
+    local result
+    result="$("${venv_dir}/bin/python" - <<'PYEOF'
+import sys
+try:
+    import torch
+    n = torch.cuda.device_count()
+    if n < 2:
+        print("SKIP: <2 devices")
+        sys.exit(2)
+    links = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            can = torch.cuda.can_device_access_peer(i, j)
+            links.append(f"cuda:{i}<->cuda:{j}={'P2P' if can else 'no-P2P'}")
+    print("INFO: " + " | ".join(links))
+    sys.exit(0)
+except Exception as e:
+    print(f"SKIP: {e}")
+    sys.exit(2)
+PYEOF
+)" 2>/dev/null || true
+
+    case "${result}" in
+        INFO*)
+            echo -e "  ${C_GREEN}[INFO]${C_RESET} ${result#INFO: }"
+            echo "        (P2P requires compatible hardware/driver; no-P2P is common on cloud GPUs)"
+            return 0
+            ;;
+        *)
+            echo -e "  ${C_YELLOW}[SKIP]${C_RESET} ${result#SKIP: }"
+            return 0
+            ;;
+    esac
+}
+
+# =============================================================================
+# run_gpu_tests — run all GPU tests. Pass --multi for deeper multi-GPU checks.
 # =============================================================================
 run_gpu_tests() {
+    local multi="no"
+    [[ "${1:-}" == "--multi" ]] && multi="yes"
     echo ""
     echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
     echo -e "${C_BOLD}  GPU TEST SUITE${C_RESET}"
@@ -169,6 +299,14 @@ run_gpu_tests() {
     test_cuda_toolkit
     test_gpu_memory
     test_pytorch_gpu
+
+    if [[ "${multi}" == "yes" ]]; then
+        echo ""
+        echo -e "${C_BOLD}Multi-GPU tests:${C_RESET}"
+        test_multi_gpu_detection
+        test_multi_gpu_cuda
+        test_gpu_to_gpu
+    fi
 
     echo ""
     echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"

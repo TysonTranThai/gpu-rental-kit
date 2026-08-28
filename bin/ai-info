@@ -22,7 +22,20 @@ if [[ -f "${AI_HOME}/config/machine.env" ]]; then
 else
     echo -e "${C_YELLOW}No machine.env found. Run ./bootstrap.sh to generate.${C_RESET}"
 fi
-echo ""
+# --- Multi-GPU summary ---
+if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    # shellcheck source=scripts/detect_gpu.sh
+    source "${SCRIPT_DIR}/scripts/detect_gpu.sh"
+    run_gpu_detection
+    if [[ "${GPU_COUNT}" -gt 1 ]]; then
+        echo -e "${C_BOLD}GPU System:${C_RESET}"
+        printf "  GPUs:        %s (MULTI-GPU)\n" "${GPU_COUNT}"
+        printf "  Aggregate:   %s GB VRAM (sum of separate GPUs — NOT one pooled GPU)\n" "${GPU_TOTAL_VRAM_GB}"
+        echo "  Selection:   model-run <model> --gpus all | --gpu N | --gpus auto --size-gb N"
+        echo ""
+    fi
+fi
 
 echo -e "${C_BOLD}Directories:${C_RESET}"
 printf "  AI Home:     %s\n" "${AI_HOME}"
@@ -43,7 +56,9 @@ echo ""
 
 echo -e "${C_BOLD}Commands:${C_RESET}"
 echo "  gpu-status     — GPU and system status"
-echo "  gpu-test       — Run GPU compute tests"
+echo "  gpu-list       — List all GPUs with details"
+echo "  gpu-topology   — GPU interconnect (NVLink/PCIe)"
+echo "  gpu-test       — Run GPU compute tests (--multi for multi-GPU)"
 echo "  model-list     — List available models"
 echo "  model-download — Download a model"
 echo "  model-run      — Run a model"

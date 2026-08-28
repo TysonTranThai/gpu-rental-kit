@@ -296,6 +296,61 @@ Start with **Ollama** if you are new. It provides the simplest model download an
 
 **llama.cpp is the primary runtime in this project.** Ollama and vLLM are optional alternatives. If an optional runtime is unavailable, a working llama.cpp installation remains the important baseline.
 
+## Multi-GPU support
+
+If your machine has multiple NVIDIA GPUs, gpu-rental-kit can use them together **where the selected inference runtime supports it**.
+
+### One model across multiple GPUs (sharding)
+
+Example: 2 × RTX 3090 = 24GB + 24GB ≈ **48GB aggregate VRAM**. A model that does not fit in one GPU may be sharded across both:
+
+```bash
+# Shard across all GPUs:
+model-run big-model --gpus all
+# Shard across specific GPUs:
+model-run big-model --gpus 0,1
+# Let the toolkit choose from an estimated model size:
+model-run llama3-70b --gpus auto --size-gb 40
+# See whether a model fits before running anything:
+model-run llama3-70b --fit --size-gb 40
+```
+
+What happens per backend:
+
+| Backend | Multi-GPU mechanism | Notes |
+|---|---|---|
+| **llama.cpp** | Layer split across visible GPUs (automatic) | GGUF layer offloading; `CUDA_VISIBLE_DEVICES` selects the GPUs |
+| **vLLM** | Tensor parallelism (`--tensor-parallel-size N`, injected automatically) | Requires an appropriate model architecture |
+| **Ollama** | Splits large models across visible GPUs automatically | No manual flags needed |
+| **PyTorch** | `CUDA_VISIBLE_DEVICES` / per-device tensors | Used by the toolkit for selection and tests |
+| **Docker** | `NVIDIA_VISIBLE_DEVICES=all` or `0,1` | See `docker/compose.yml` |
+
+### Multiple models on different GPUs (workload parallelism)
+
+One GPU per workload — no sharding involved:
+
+```bash
+model-run model-a --gpu 0
+model-run model-b --gpu 1
+```
+
+### Inspecting GPUs
+
+```bash
+gpu-list              # every GPU: name, VRAM, compute capability, PCI bus
+gpu-topology          # NVLink/PCIe interconnect (when the platform reports it)
+gpu-status            # live status incl. per-GPU usage and MULTI-GPU mode
+gpu-test --multi      # deeper multi-GPU tests (per-GPU CUDA, P2P report)
+```
+
+### Important — what multi-GPU does and does not do
+
+> **Aggregate VRAM is NOT pooled.** 2 × 24GB gives ~48GB of *aggregate* memory across two separate GPUs — it does **not** create one 48GB GPU. Whether a model can use the aggregate depends on the backend's sharding/offloading support and the model architecture.
+
+- **Multi-GPU does not always mean 2 GPUs = 2× speed.** Performance depends on the model, backend, tensor parallelism, interconnect (PCIe vs NVLink), batch size, context length, and workload. Multi-GPU often lets a model *fit* rather than making it faster.
+- **Mixed GPUs work but the smaller/slower GPU becomes the bottleneck.** gpu-rental-kit detects mixed setups and warns you.
+- **The default is always single GPU.** Multi-GPU is enabled only when you explicitly pass `--gpus`. Existing `CUDA_VISIBLE_DEVICES` values are always respected.
+
 ## Windows Users
 
 ### Can I use this from Windows?
@@ -433,10 +488,12 @@ These are the commands installed into `~/ai/bin` by setup:
 |---|---|
 | `bootstrap.sh` | Main setup, validation, and test entry point |
 | `gpu-status` | Show GPU, driver, CUDA, and runtime status |
-| `gpu-test` | Run GPU compute checks and a light benchmark |
+| `gpu-list` | List every GPU with name, VRAM, compute capability, and PCI bus |
+| `gpu-topology` | Show GPU interconnect (NVLink/PCIe) when reported |
+| `gpu-test` | Run GPU compute checks and a light benchmark (`--multi` for multi-GPU tests) |
 | `model-list` | List registered model aliases and downloaded models |
 | `model-download` | Download a registered alias, Hugging Face model, or Ollama model |
-| `model-run` | Run a model using Ollama, vLLM, or llama.cpp |
+| `model-run` | Run a model using Ollama, vLLM, or llama.cpp (`--gpu N`, `--gpus all\|0,1\|auto`, `--size-gb N`, `--fit` for multi-GPU) |
 | `model-stop` | Stop a running model process |
 | `ai-start` | Start Ollama, vLLM, or llama.cpp; no arguments opens a menu |
 | `ai-stop` | Stop the active AI runtime |

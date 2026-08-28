@@ -4,10 +4,14 @@
 # =============================================================================
 # Reads MOCK_GPU_PROFILE (default rtx4090) and answers like real nvidia-smi:
 #   nvidia-smi -L
-#   nvidia-smi --query-gpu=name --format=csv,noheader
-#   nvidia-smi --query-gpu=memory.total --format=csv,noheader
-#   nvidia-smi --query-gpu=driver_version --format=csv,noheader
+#   nvidia-smi --query-gpu=<field[,field...]> --format=csv[,noheader][,nounits]
 #   nvidia-smi                       (full text output with CUDA Version line)
+#   nvidia-smi topo -m               (topology table; MOCK_TOPO_FILE overrides)
+#   nvidia-smi --query-compute-apps=... --format=csv,noheader
+#
+# Per-GPU overrides: MOCK_<FIELD>_<INDEX> wins over the profile value, e.g.
+#   MOCK_NAME_1="NVIDIA Tesla T4"  MOCK_MEM_TOTAL_1="16384 MiB"
+# MOCK_EXTRA_GPU_COUNT overrides the profile's MOCK_GPU_COUNT (used by tests).
 # =============================================================================
 set -Eeuo pipefail
 
@@ -25,24 +29,142 @@ source "${PROFILE_FILE}"
 # MOCK_EXTRA_GPU_COUNT overrides the profile's MOCK_GPU_COUNT (used by tests)
 MOCK_GPU_COUNT="${MOCK_EXTRA_GPU_COUNT:-${MOCK_GPU_COUNT:-1}}"
 
-case "$*" in
-    *"-L"*)
-        echo "${MOCK_LINE1:-GPU 0: ${MOCK_NAME} (UUID: GPU-00000000-0000-0000-0000-000000000000)}"
-        if [[ "${MOCK_GPU_COUNT}" == "2" ]]; then
-            echo "${MOCK_LINE2:-GPU 1: ${MOCK_NAME} (UUID: GPU-11111111-1111-1111-1111-111111111111)}"
+# gpu_val <FIELD_BASENAME> <index> — per-GPU value with per-index override
+gpu_val() {
+    local field="$1" idx="$2"
+    local override_var="${field}_${idx}"
+    eval "local override=\"\${${override_var}:-}\""
+    eval "local base=\"\${${field}:-}\""
+    echo "${override:-${base}}"
+}
+
+uuid_for() {
+    local idx="$1"
+    local uuid_var="MOCK_UUID_${idx}"
+    eval "local u=\"\${${uuid_var}:-GPU-$(printf '%08x-0000-0000-0000-000000000000' "${idx}")}\""
+    echo "${u}"
+}
+
+# Field value for a --query-gpu= row (respecting per-index overrides)
+query_field_value() {
+    local field="$1" idx="$2"
+    case "${field}" in
+        index)              echo "${idx}" ;;
+        name)               gpu_val "MOCK_NAME" "${idx}" ;;
+        memory.total)       gpu_val "MOCK_MEM_TOTAL" "${idx}" ;;
+        memory.used)        gpu_val "MOCK_MEM_USED" "${idx}" ;;
+        memory.free)        gpu_val "MOCK_MEM_FREE" "${idx}" ;;
+        utilization.gpu)    gpu_val "MOCK_UTIL" "${idx}" ;;
+        temperature.gpu)    gpu_val "MOCK_TEMP" "${idx}" ;;
+        power.draw)         gpu_val "MOCK_POWER_DRAW" "${idx}" ;;
+        power.limit)        gpu_val "MOCK_POWER_LIMIT" "${idx}" ;;
+        driver_version)     gpu_val "MOCK_DRIVER" "${idx}" ;;
+        pci.bus_id)         gpu_val "MOCK_PCI_BUS" "${idx}" ;;
+        compute_cap)        gpu_val "MOCK_COMPUTE_CAP" "${idx}" ;;
+        count)              echo "${MOCK_GPU_COUNT}" ;;
+        uuid)               uuid_for "${idx}" ;;
+        *)                  echo "" ;;
+    esac
+}
+
+strip_units() {
+    # strip " MiB", " %", " W" etc. — keep numeric part
+    sed 's/[^0-9.]//g'
+}
+
+# ---------------------------------------------------------------------------
+# Parse args
+# ---------------------------------------------------------------------------
+QUERY_FIELDS=""
+NOHEADER="no"
+NOUNITS="no"
+TOPO="no"
+QUERY_COMPUTE_APPS="no"
+INDEX_FILTER=""
+PLAIN_ARGS=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -L) PLAIN_ARGS="${PLAIN_ARGS} -L"; shift ;;
+        -i) INDEX_FILTER="$2"; shift 2 ;;
+        --query-gpu=*) QUERY_FIELDS="${1#--query-gpu=}"; shift ;;
+        --query-compute-apps=*) QUERY_COMPUTE_APPS="yes"; QUERY_FIELDS="${1#--query-compute-apps=}"; shift ;;
+        --format=*)
+            local_fmt="${1#--format=}"
+            [[ "${local_fmt}" == *noheader* ]] && NOHEADER="yes"
+            [[ "${local_fmt}" == *nounits* ]] && NOUNITS="yes"
+            shift
+            ;;
+        topo) shift; [[ "${1:-}" == "-m" ]] && shift && TOPO="yes" ;;
+        *) PLAIN_ARGS="${PLAIN_ARGS} $1"; shift ;;
+    esac
+done
+
+# --- topology -------------------------------------------------------------
+if [[ "${TOPO}" == "yes" ]]; then
+    if [[ -n "${MOCK_TOPO_FILE:-}" && -f "${MOCK_TOPO_FILE}" ]]; then
+        cat "${MOCK_TOPO_FILE}"
+        exit 0
+    fi
+    # Default 2-GPU PCIe table (generic); 1-GPU single row
+    echo -e "\tGPU0\tGPU1\tCPU Affinity\tNUMA Affinity"
+    if [[ "${MOCK_GPU_COUNT}" -ge 2 ]]; then
+        echo -e "GPU0\tX\t${MOCK_LINK_TYPE:-PIX}\t0-31\tN/A"
+        echo -e "GPU1\t${MOCK_LINK_TYPE:-PIX}\tX\t0-31\tN/A"
+    else
+        echo -e "GPU0\tX\t0-31\tN/A"
+    fi
+    exit 0
+fi
+
+# --- compute apps ---------------------------------------------------------
+if [[ "${QUERY_COMPUTE_APPS}" == "yes" ]]; then
+    if [[ -n "${MOCK_COMPUTE_APPS:-}" ]]; then
+        echo "${MOCK_COMPUTE_APPS}"
+    fi
+    exit 0
+fi
+
+# --- structured per-GPU queries -------------------------------------------
+if [[ -n "${QUERY_FIELDS}" ]]; then
+    rows=""
+    for (( gi=0; gi<MOCK_GPU_COUNT; gi++ )); do
+        # -i <n> selects a single GPU like real nvidia-smi
+        if [[ -n "${INDEX_FILTER}" && "${gi}" != "${INDEX_FILTER}" ]]; then
+            continue
         fi
-        ;;
-    *"--query-gpu=name"*)                echo "${MOCK_NAME}" ;;
-    *"--query-gpu=memory.total"*)        echo "${MOCK_MEM_TOTAL}" ;;
-    *"--query-gpu=memory.used"*)         echo "${MOCK_MEM_USED}" ;;
-    *"--query-gpu=memory.free"*)         echo "${MOCK_MEM_FREE}" ;;
-    *"--query-gpu=utilization.gpu"*)     echo "${MOCK_UTIL}" ;;
-    *"--query-gpu=temperature.gpu"*)     echo "${MOCK_TEMP}" ;;
-    *"--query-gpu=power.draw"*)          echo "${MOCK_POWER_DRAW}" ;;
-    *"--query-gpu=power.limit"*)         echo "${MOCK_POWER_LIMIT}" ;;
-    *"--query-gpu=driver_version"*)      echo "${MOCK_DRIVER}" ;;
-    *)
-        # Full text output — must include a "CUDA Version: X.Y" line
-        cat "${MOCKS_DIR}/outputs/${PROFILE}.txt"
-        ;;
-esac
+        row=""
+        IFS=',' read -r -a fields <<< "${QUERY_FIELDS}"
+        for f in "${fields[@]}"; do
+            f="$(echo "${f}" | tr -d ' ')"
+            v="$(query_field_value "${f}" "${gi}")"
+            if [[ "${NOUNITS}" == "yes" ]]; then
+                v="$(echo "${v}" | strip_units)"
+            fi
+            row="${row:+${row}, }${v}"
+        done
+        rows="${rows}${row}"$'\n'
+    done
+    if [[ "${NOHEADER}" == "yes" ]]; then
+        printf '%s' "${rows}"
+    else
+        echo "${QUERY_FIELDS}" | tr ',' '\n' | paste -sd', ' - 
+        printf '%s' "${rows}"
+    fi
+    exit 0
+fi
+
+# --- -L -------------------------------------------------------------------
+if [[ "${PLAIN_ARGS}" == *" -L"* || "${PLAIN_ARGS}" == " -L" ]]; then
+    for (( gi=0; gi<MOCK_GPU_COUNT; gi++ )); do
+        if [[ "${gi}" -eq 0 && -n "${MOCK_LINE1:-}" ]]; then
+            echo "${MOCK_LINE1}"
+        else
+            echo "GPU ${gi}: $(gpu_val MOCK_NAME "${gi}") (UUID: $(uuid_for "${gi}"))"
+        fi
+    done
+    exit 0
+fi
+
+# --- full text output (single-GPU profile text; CUDA Version line needed) --
+cat "${MOCKS_DIR}/outputs/${PROFILE}.txt"

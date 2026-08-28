@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# =============================================================================
+# gpu-list — List every NVIDIA GPU with per-GPU details
+# =============================================================================
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/detect_gpu.sh
+source "${SCRIPT_DIR}/scripts/detect_gpu.sh"
+
+run_gpu_detection
+
+if [[ "${HAS_NVIDIA_GPU}" != "yes" ]]; then
+    echo "No NVIDIA GPUs detected."
+    echo "Check: nvidia-smi"
+    exit 1
+fi
+
+echo "GPUS: ${GPU_COUNT}"
+if [[ "${GPU_COUNT}" -gt 1 ]]; then
+    echo "AGGREGATE VRAM: ${GPU_TOTAL_VRAM_GB} GB (sum of separate GPUs — NOT one pooled GPU)"
+else
+    echo "TOTAL VRAM: ${GPU_TOTAL_VRAM_GB} GB"
+fi
+echo ""
+
+i=0
+while [[ "${i}" -lt "${GPU_COUNT}" ]]; do
+    echo "GPU ${i}:"
+    echo "  Name:               $(gpu_name_at "${i}")"
+    echo "  VRAM:               $(gpu_vram_gb_at "${i}") GB"
+    echo "  Compute Capability: $(gpu_cc_at "${i}")"
+    echo "  PCI Bus ID:         $(gpu_pci_bus_at "${i}")"
+    echo ""
+    i=$((i + 1))
+done
+
+if [[ "${GPU_COUNT}" -gt 1 ]]; then
+    echo "Profile: ${GPU_MULTI_PROFILE}"
+    if [[ "${GPU_MIXED_WARNING}" == "yes" ]]; then
+        echo "WARNING: Mixed GPUs — the slower/smaller GPU can become the bottleneck."
+    fi
+    if [[ "${GPU_TOPOLOGY_AVAILABLE}" == "yes" ]] && [[ -n "${GPU_TOPOLOGY_LINKS}" ]]; then
+        echo ""
+        echo "Topology:"
+        echo "${GPU_TOPOLOGY_LINKS}" | sed 's/^/  /'
+    fi
+fi

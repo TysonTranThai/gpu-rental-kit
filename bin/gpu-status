@@ -16,15 +16,51 @@ echo ""
 # --- GPU ---
 echo -e "${C_BOLD}GPU:${C_RESET}"
 if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
-    printf "  GPU:              %s\n" "$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
-    printf "  VRAM:             %s\n" "$(nvidia-smi --query-gpu=memory.total --format=csv,noheader | head -1)"
-    printf "  VRAM USED:        %s\n" "$(nvidia-smi --query-gpu=memory.used --format=csv,noheader | head -1)"
-    printf "  VRAM FREE:        %s\n" "$(nvidia-smi --query-gpu=memory.free --format=csv,noheader | head -1)"
-    printf "  GPU UTILIZATION:  %s\n" "$(nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader | head -1)"
+    gpu_total="$(nvidia-smi --query-gpu=count --format=csv,noheader 2>/dev/null | head -1)"
+    [[ -z "${gpu_total}" || "${gpu_total}" == "0" ]] && gpu_total=1
+    printf "  GPU COUNT:        %s\n" "${gpu_total}"
+
+    if [[ "${gpu_total}" -gt 1 ]]; then
+        printf "  AGGREGATE VRAM:   %s GB (sum of separate GPUs — NOT one pooled GPU)\n" \
+            "$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null \
+              | awk '{s+=$1} END {printf "%.0f", s/1024}')"
+    fi
+
+    # Per-GPU lines (always show at least GPU 0)
+    i=0
+    while [[ "${i}" -lt "${gpu_total}" ]]; do
+        name="$(nvidia-smi -i "${i}" --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)"
+        printf "  GPU %s:            %s\n" "${i}" "${name}"
+        printf "    VRAM USED:      %s / %s\n" \
+            "$(nvidia-smi -i "${i}" --query-gpu=memory.used --format=csv,noheader 2>/dev/null | head -1)" \
+            "$(nvidia-smi -i "${i}" --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -1)"
+        printf "    UTILIZATION:    %s\n" "$(nvidia-smi -i "${i}" --query-gpu=utilization.gpu --format=csv,noheader 2>/dev/null | head -1)"
+        i=$((i + 1))
+    done
+
     printf "  TEMPERATURE:      %s\n" "$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader | head -1)°C"
     printf "  POWER:            %s / %s\n" "$(nvidia-smi --query-gpu=power.draw --format=csv,noheader | head -1)" "$(nvidia-smi --query-gpu=power.limit --format=csv,noheader | head -1)"
     printf "  DRIVER:           %s\n" "$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)"
     printf "  CUDA:             %s\n" "$(nvidia-smi | grep 'CUDA Version' | sed 's/.*CUDA Version: //' | sed 's/ .*//' || echo 'N/A')"
+
+    # Active compute processes — which GPUs are actually being used
+    compute_apps="$(nvidia-smi --query-compute-apps=gpu_uuid,used_memory --format=csv,noheader 2>/dev/null || true)"
+    if [[ -n "${compute_apps}" ]]; then
+        busy="$(nvidia-smi --query-compute-apps=gpu_uuid --format=csv,noheader 2>/dev/null \
+            | while IFS= read -r uuid; do \
+                nvidia-smi -L 2>/dev/null | grep "UUID: ${uuid})" | sed 's/^GPU \([0-9]*\):.*/\1/'; \
+              done | sort -u | tr '\n' ',' | sed 's/,$//')"
+        if [[ -n "${busy}" ]]; then
+            printf "  ACTIVE ON GPU(S): %s\n" "${busy}"
+        fi
+    fi
+
+    # Multi-GPU mode label
+    if [[ "${gpu_total}" -gt 1 ]]; then
+        echo -e "  MODE:             ${C_BOLD}MULTI-GPU${C_RESET}"
+    else
+        echo -e "  MODE:             ${C_BOLD}SINGLE-GPU${C_RESET}"
+    fi
 else
     printf "  GPU:              ${C_RED}NOT DETECTED${C_RESET}\n"
     printf "  (nvidia-smi not available)\n"

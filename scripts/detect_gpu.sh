@@ -24,6 +24,20 @@ GPU_PROFILE="unknown"
 GPU_ARCHITECTURE=""
 GPU_COMPUTE_CAPABILITY=""
 
+# --- Multi-GPU state (all pipe-separated lists, one entry per GPU) ---
+GPU_NAMES_LIST=""        # e.g. "RTX 3090|RTX 3090"
+GPU_VRAMS_MB_LIST=""     # e.g. "24576|24576"
+GPU_VRAMS_GB_LIST=""     # e.g. "24|24"
+GPU_PCI_BUSIDS_LIST=""   # e.g. "00000000:05:00.0|00000000:06:00.0"
+GPU_COMPUTE_CAPS_LIST="" # e.g. "8.6|8.6"
+GPU_TOTAL_VRAM_MB=0
+GPU_TOTAL_VRAM_GB=0
+GPU_MULTI_PROFILE="single"  # no-gpu | single | multi-gpu-small | multi-gpu-large | multi-gpu-mixed
+GPU_MIXED_WARNING="no"       # yes when GPUs differ in model name or VRAM size
+GPU_TOPOLOGY_AVAILABLE="no"
+GPU_TOPOLOGY_RAW=""         # full `nvidia-smi topo -m` table (when available)
+GPU_TOPOLOGY_LINKS=""       # lines like "GPU0 <-> GPU1: PCIe"
+
 # =============================================================================
 # detect_nvidia_gpu — detect GPU via nvidia-smi, lspci, or other means
 # =============================================================================
@@ -116,6 +130,166 @@ detect_cuda_compat() {
 }
 
 # =============================================================================
+# gpu_arch_for_name <gpu-name> — print "Architecture|compute-capability"
+# Estimates architecture/compute capability from the marketing name.
+# (nvidia-smi does not expose compute capability; use PyTorch for exact CC.)
+# =============================================================================
+gpu_arch_for_name() {
+    local gpu_name="$(echo "$1" | tr '[:upper:]' '[:lower:]')"
+
+    if echo "${gpu_name}" | grep -qE 'rtx 50'; then
+        echo "Blackwell|12.x"
+    elif echo "${gpu_name}" | grep -qE 'rtx 40'; then
+        echo "Ada Lovelace|8.9"
+    elif echo "${gpu_name}" | grep -qE 'rtx 30'; then
+        echo "Ampere|8.6"
+    elif echo "${gpu_name}" | grep -qE 'rtx 20'; then
+        echo "Turing|7.5"
+    elif echo "${gpu_name}" | grep -qiE 'v100'; then
+        echo "Volta|7.0"
+    elif echo "${gpu_name}" | grep -qiE 'a100'; then
+        echo "Ampere|8.0"
+    elif echo "${gpu_name}" | grep -qiE 'h100'; then
+        echo "Hopper|9.0"
+    elif echo "${gpu_name}" | grep -qiE 't4|tesla t4'; then
+        echo "Turing|7.5"
+    elif echo "${gpu_name}" | grep -qiE 'p100'; then
+        echo "Pascal|6.0"
+    else
+        echo "unknown|unknown"
+    fi
+}
+
+# =============================================================================
+# detect_gpu_details — collect per-GPU details for ALL NVIDIA GPUs
+# Fills GPU_NAMES_LIST, GPU_VRAMS_MB_LIST, GPU_VRAMS_GB_LIST,
+# GPU_PCI_BUSIDS_LIST, GPU_COMPUTE_CAPS_LIST, GPU_TOTAL_VRAM_MB/_GB.
+# Existing single-GPU variables keep their original meaning (GPU 0 / first GPU)
+# so nothing that relies on them changes.
+# =============================================================================
+detect_gpu_details() {
+    GPU_NAMES_LIST=""
+    GPU_VRAMS_MB_LIST=""
+    GPU_VRAMS_GB_LIST=""
+    GPU_PCI_BUSIDS_LIST=""
+    GPU_COMPUTE_CAPS_LIST=""
+    GPU_TOTAL_VRAM_MB=0
+    GPU_TOTAL_VRAM_GB=0
+
+    [[ "${HAS_NVIDIA_GPU}" != "yes" ]] && { export GPU_NAMES_LIST GPU_VRAMS_MB_LIST GPU_VRAMS_GB_LIST GPU_PCI_BUSIDS_LIST GPU_COMPUTE_CAPS_LIST GPU_TOTAL_VRAM_MB GPU_TOTAL_VRAM_GB; return 0; }
+
+    local sep="" name vram_mb vram_gb pci_bus cc_pair arch cc total=0
+
+    if command -v nvidia-smi &>/dev/null && \
+       nvidia-smi --query-gpu=index,name,memory.total,pci.bus_id --format=csv,noheader &>/dev/null 2>&1; then
+        while IFS= read -r _row; do
+            # Split on commas only (names contain spaces)
+            _row="${_row#,}"; _row="${_row%,}"
+            _idx="${_row%%,*}"; _rest="${_row#*,}"
+            name="${_rest%%,*}"; _rest="${_rest#*,}"
+            vram_mb="${_rest%%,*}"; pci_bus="${_rest#*,}"
+            name="$(echo "${name}" | sed 's/^ *//;s/ *$//')"
+            pci_bus="$(echo "${pci_bus}" | sed 's/^ *//;s/ *$//')"
+            [[ -z "${name}" ]] && continue
+            vram_mb="$(echo "${vram_mb}" | sed 's/[^0-9]//g')"
+            [[ -z "${vram_mb}" ]] && vram_mb=0
+            vram_gb="$(awk "BEGIN {printf \"%.0f\", ${vram_mb}/1024}")"
+            cc_pair="$(gpu_arch_for_name "${name}")"
+            arch="${cc_pair%%|*}"
+            cc="${cc_pair##*|}"
+            GPU_NAMES_LIST="${GPU_NAMES_LIST}${sep}${name}"
+            GPU_VRAMS_MB_LIST="${GPU_VRAMS_MB_LIST}${sep}${vram_mb}"
+            GPU_VRAMS_GB_LIST="${GPU_VRAMS_GB_LIST}${sep}${vram_gb}"
+            GPU_PCI_BUSIDS_LIST="${GPU_PCI_BUSIDS_LIST}${sep}${pci_bus}"
+            GPU_COMPUTE_CAPS_LIST="${GPU_COMPUTE_CAPS_LIST}${sep}${cc}"
+            sep="|"
+            total=$((total + vram_mb))
+        done < <(nvidia-smi --query-gpu=index,name,memory.total,pci.bus_id --format=csv,noheader 2>/dev/null)
+    else
+        # Fallback: -L lines ("GPU 0: <name> (UUID: ...)")
+        local line gname
+        while IFS= read -r line; do
+            gname="$(echo "${line}" | sed 's/^GPU[[:space:]]*[0-9]*:[[:space:]]*//' | sed 's/[[:space:]]*(UUID:.*$//' )"
+            [[ -z "${gname}" ]] && continue
+            cc_pair="$(gpu_arch_for_name "${gname}")"
+            cc="${cc_pair##*|}"
+            GPU_NAMES_LIST="${GPU_NAMES_LIST}${sep}${gname}"
+            GPU_VRAMS_MB_LIST="${GPU_VRAMS_MB_LIST}${sep}0"
+            GPU_VRAMS_GB_LIST="${GPU_VRAMS_GB_LIST}${sep}0"
+            GPU_PCI_BUSIDS_LIST="${GPU_PCI_BUSIDS_LIST}${sep}unknown"
+            GPU_COMPUTE_CAPS_LIST="${GPU_COMPUTE_CAPS_LIST}${sep}${cc}"
+            sep="|"
+        done < <(nvidia-smi -L 2>/dev/null)
+    fi
+
+    GPU_TOTAL_VRAM_MB="${total}"
+    GPU_TOTAL_VRAM_GB="$(awk "BEGIN {printf \"%.0f\", ${GPU_TOTAL_VRAM_MB}/1024}")"
+
+    export GPU_NAMES_LIST GPU_VRAMS_MB_LIST GPU_VRAMS_GB_LIST GPU_PCI_BUSIDS_LIST GPU_COMPUTE_CAPS_LIST GPU_TOTAL_VRAM_MB GPU_TOTAL_VRAM_GB
+}
+
+# =============================================================================
+# gpu_name_at <i> / gpu_vram_gb_at <i> / gpu_cc_at <i> — access list entries
+# =============================================================================
+gpu_name_at()      { echo "${GPU_NAMES_LIST}"      | cut -d'|' -f"$(( $1 + 1 ))"; }
+gpu_vram_gb_at()   { echo "${GPU_VRAMS_GB_LIST}"   | cut -d'|' -f"$(( $1 + 1 ))"; }
+gpu_pci_bus_at()   { echo "${GPU_PCI_BUSIDS_LIST}" | cut -d'|' -f"$(( $1 + 1 ))"; }
+gpu_cc_at()        { echo "${GPU_COMPUTE_CAPS_LIST}" | cut -d'|' -f"$(( $1 + 1 ))"; }
+
+# =============================================================================
+# detect_gpu_topology — parse `nvidia-smi topo -m` when available.
+# Produces GPU_TOPOLOGY_LINKS lines like "GPU0 <-> GPU1: PCIe" or "...: NVLink".
+# Never assumes NVLink exists; missing/failed topology is reported honestly.
+# =============================================================================
+detect_gpu_topology() {
+    GPU_TOPOLOGY_AVAILABLE="no"
+    GPU_TOPOLOGY_RAW=""
+    GPU_TOPOLOGY_LINKS=""
+
+    command -v nvidia-smi &>/dev/null || { export GPU_TOPOLOGY_AVAILABLE GPU_TOPOLOGY_RAW GPU_TOPOLOGY_LINKS; return 0; }
+    GPU_TOPOLOGY_RAW="$(nvidia-smi topo -m 2>/dev/null || true)"
+    [[ -z "${GPU_TOPOLOGY_RAW}" ]] && { export GPU_TOPOLOGY_AVAILABLE GPU_TOPOLOGY_RAW GPU_TOPOLOGY_LINKS; return 0; }
+    GPU_TOPOLOGY_AVAILABLE="yes"
+
+    local line row_idx tokens n=${GPU_COUNT} j cell link_type sep=""
+    while IFS= read -r line; do
+        [[ "${line}" =~ ^GPU[0-9]+[[:space:]] ]] || continue
+        row_idx="$(echo "${line}" | sed 's/^GPU\([0-9]*\).*$/\1/')"
+        IFS=$'\t' read -r -a tokens <<< "$(echo "${line}" | tr -s '[:space:]' '\t')"
+        for (( j=0; j<n; j++ )); do
+            [[ "${j}" -le "${row_idx}" ]] || break
+            cell="${tokens[$((j + 1))]:-}"
+            [[ -z "${cell}" || "${cell}" == "X" ]] && continue
+            [[ "${j}" -ge "${row_idx}" ]] && continue   # matrix is symmetric; keep upper triangle only
+            case "${cell}" in
+                NV*|nv*) link_type="NVLink" ;;
+                PIX|PXB|PHB|NODE|SYS|PCIE|PIX#|PXB#|PHB#|NODE#|SYS#) link_type="PCIe" ;;
+                *) link_type="${cell}" ;;
+            esac
+            GPU_TOPOLOGY_LINKS="${GPU_TOPOLOGY_LINKS}${sep}GPU${j} <-> GPU${row_idx}: ${link_type}"
+            sep=$'\n'
+        done
+    done <<< "${GPU_TOPOLOGY_RAW}"
+
+    export GPU_TOPOLOGY_AVAILABLE GPU_TOPOLOGY_RAW GPU_TOPOLOGY_LINKS
+}
+
+# gpu_link_type <a> <b> — print NVLink/PCIe/unknown for a GPU pair
+gpu_link_type() {
+    local a="$1" b="$2" tmp
+    # Matrix is stored upper-triangle; normalize so a < b
+    if [[ "${b}" -lt "${a}" ]]; then tmp="${a}"; a="${b}"; b="${tmp}"; fi
+    local pair="GPU${a} <-> GPU${b}"
+    if echo "${GPU_TOPOLOGY_LINKS}" | grep -q "^${pair}: NVLink$"; then
+        echo "NVLink"
+    elif echo "${GPU_TOPOLOGY_LINKS}" | grep -q "^${pair}: PCIe$"; then
+        echo "PCIe"
+    else
+        echo "unknown"
+    fi
+}
+
+# =============================================================================
 # classify_gpu — determine GPU profile based on VRAM
 # =============================================================================
 classify_gpu() {
@@ -147,43 +321,46 @@ classify_gpu() {
         GPU_PROFILE="unknown-vram"
     fi
 
-    # Detect GPU architecture from name
-    local gpu_lower
-    gpu_lower="$(echo "${GPU_NAME}" | tr '[:upper:]' '[:lower:]')"
-
-    if echo "${gpu_lower}" | grep -qE 'rtx 50'; then
-        GPU_ARCHITECTURE="Blackwell"
-        GPU_COMPUTE_CAPABILITY="12.x"
-    elif echo "${gpu_lower}" | grep -qE 'rtx 40'; then
-        GPU_ARCHITECTURE="Ada Lovelace"
-        GPU_COMPUTE_CAPABILITY="8.9"
-    elif echo "${gpu_lower}" | grep -qE 'rtx 30'; then
-        GPU_ARCHITECTURE="Ampere"
-        GPU_COMPUTE_CAPABILITY="8.6"
-    elif echo "${gpu_lower}" | grep -qE 'rtx 20'; then
-        GPU_ARCHITECTURE="Turing"
-        GPU_COMPUTE_CAPABILITY="7.5"
-    elif echo "${gpu_lower}" | grep -qiE 'v100'; then
-        GPU_ARCHITECTURE="Volta"
-        GPU_COMPUTE_CAPABILITY="7.0"
-    elif echo "${gpu_lower}" | grep -qiE 'a100'; then
-        GPU_ARCHITECTURE="Ampere"
-        GPU_COMPUTE_CAPABILITY="8.0"
-    elif echo "${gpu_lower}" | grep -qiE 'h100'; then
-        GPU_ARCHITECTURE="Hopper"
-        GPU_COMPUTE_CAPABILITY="9.0"
-    elif echo "${gpu_lower}" | grep -qiE 't4|tesla t4'; then
-        GPU_ARCHITECTURE="Turing"
-        GPU_COMPUTE_CAPABILITY="7.5"
-    elif echo "${gpu_lower}" | grep -qiE 'p100'; then
-        GPU_ARCHITECTURE="Pascal"
-        GPU_COMPUTE_CAPABILITY="6.0"
-    else
-        GPU_ARCHITECTURE="unknown"
-        GPU_COMPUTE_CAPABILITY="unknown"
-    fi
+    # Detect GPU architecture from name (estimated from marketing name)
+    local cc_pair arch cc
+    cc_pair="$(gpu_arch_for_name "${GPU_NAME}")"
+    arch="${cc_pair%%|*}"
+    cc="${cc_pair##*|}"
+    GPU_ARCHITECTURE="${arch}"
+    GPU_COMPUTE_CAPABILITY="${cc}"
 
     export GPU_PROFILE GPU_ARCHITECTURE GPU_COMPUTE_CAPABILITY
+}
+
+# =============================================================================
+# classify_multi_gpu — aggregate/multi-GPU profile.
+# single          — 1 GPU
+# multi-gpu-small — 2+ identical GPUs, aggregate < 64GB
+# multi-gpu-large — 2+ identical GPUs, aggregate >= 64GB
+# multi-gpu-mixed — 2+ GPUs with differing models or VRAM sizes
+# NOTE: "aggregate VRAM" is the sum of separate GPUs, NOT one pooled GPU.
+# =============================================================================
+classify_multi_gpu() {
+    GPU_MULTI_PROFILE="single"
+    GPU_MIXED_WARNING="no"
+
+    if [[ "${HAS_NVIDIA_GPU}" != "yes" ]]; then
+        GPU_MULTI_PROFILE="no-gpu"
+    elif [[ "${GPU_COUNT}" -gt 1 ]]; then
+        local distinct_names distinct_vrams
+        distinct_names="$(echo "${GPU_NAMES_LIST}" | tr '|' '\n' | sort -u | grep -c . || true)"
+        distinct_vrams="$(echo "${GPU_VRAMS_GB_LIST}" | tr '|' '\n' | sort -u | grep -c . || true)"
+        if [[ "${distinct_names}" -gt 1 ]] || [[ "${distinct_vrams}" -gt 1 ]]; then
+            GPU_MULTI_PROFILE="multi-gpu-mixed"
+            GPU_MIXED_WARNING="yes"
+        elif [[ "${GPU_TOTAL_VRAM_GB}" -ge 64 ]]; then
+            GPU_MULTI_PROFILE="multi-gpu-large"
+        else
+            GPU_MULTI_PROFILE="multi-gpu-small"
+        fi
+    fi
+
+    export GPU_MULTI_PROFILE GPU_MIXED_WARNING
 }
 
 # =============================================================================
@@ -208,6 +385,26 @@ print_gpu_summary() {
     printf "  %-22s %s\n" "Profile:"        "${GPU_PROFILE}"
     echo ""
 
+    # --- Multi-GPU summary (only shown when more than one GPU exists) ---
+    if [[ "${HAS_NVIDIA_GPU}" == "yes" ]] && [[ "${GPU_COUNT}" -gt 1 ]]; then
+        echo -e "${C_BOLD}  MULTI-GPU:${C_RESET}"
+        local i
+        for (( i=0; i<GPU_COUNT; i++ )); do
+            printf "    GPU %-2s %-32s %6s GB  (CC %s)\n" "${i}" "$(gpu_name_at "${i}")" "$(gpu_vram_gb_at "${i}")" "$(gpu_cc_at "${i}")"
+        done
+        printf "    %-20s %s GB\n" "Aggregate VRAM:" "${GPU_TOTAL_VRAM_GB}"
+        echo "    Note: aggregate VRAM is the SUM of separate GPUs,"
+        echo "    not one pooled GPU. Usability depends on the runtime."
+        if [[ "${GPU_MIXED_WARNING}" == "yes" ]]; then
+            echo -e "    ${C_YELLOW}[WARN]${C_RESET} Mixed GPUs: the slower/smaller GPU can become the bottleneck."
+        fi
+        if [[ "${GPU_TOPOLOGY_AVAILABLE}" == "yes" ]] && [[ -n "${GPU_TOPOLOGY_LINKS}" ]]; then
+            echo -e "    ${C_BOLD}Topology:${C_RESET}"
+            echo "${GPU_TOPOLOGY_LINKS}" | sed 's/^/      /'
+        fi
+        echo ""
+    fi
+
     if [[ "${HAS_NVIDIA_GPU}" != "yes" ]]; then
         echo -e "${C_RED}[ERROR]${C_RESET} No NVIDIA GPU detected."
         echo "This toolkit requires an NVIDIA GPU with working drivers."
@@ -226,6 +423,9 @@ run_gpu_detection() {
     detect_nvidia_gpu
     detect_cuda_compat
     classify_gpu
+    detect_gpu_details
+    detect_gpu_topology
+    classify_multi_gpu
 }
 
 # Direct execution
