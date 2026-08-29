@@ -306,7 +306,8 @@ if [[ "${PLATFORM}" != "Darwin" ]]; then
         if [[ "${I18N_LANG}" == "en" && "${local_saved}" != "en" ]]; then
             echo -e "${C_BOLD}$(tr SELECT_LANGUAGE_PROMPT)${C_RESET}"
             echo ""
-            local i=1 codes=()
+            i=1
+            codes=()
             while IFS= read -r code; do
                 codes+=("${code}")
                 case "${code}" in
