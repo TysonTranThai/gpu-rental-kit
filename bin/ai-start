@@ -42,8 +42,13 @@ start_ollama() {
     # Ensure ollama serve is running
     if ! pgrep -f "ollama serve" >/dev/null 2>&1; then
         echo -e "${C_BOLD}[ollama]${C_RESET} Starting Ollama server..."
-        if command -v systemctl &>/dev/null && systemctl list-unit-files ollama.service &>/dev/null 2>&1; then
-            sudo systemctl start ollama 2>/dev/null || true
+        if command -v systemctl &>/dev/null && [[ -d /run/systemd/system ]] \
+            && systemctl list-unit-files ollama.service &>/dev/null 2>&1; then
+            if [[ "$(id -u)" -eq 0 ]]; then
+                systemctl start ollama 2>/dev/null || true
+            else
+                sudo systemctl start ollama 2>/dev/null || true
+            fi
         else
             nohup ollama serve > "${AI_HOME}/logs/ollama.log" 2>&1 &
             echo $! > "${AI_HOME}/logs/ollama.pid"

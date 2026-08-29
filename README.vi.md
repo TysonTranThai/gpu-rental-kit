@@ -2,7 +2,7 @@
   🇬🇧 <a href="README.md">English</a> &nbsp;|&nbsp; 🇻🇳 <a href="README.vi.md">Tiếng Việt</a> &nbsp;|&nbsp; 🇨🇳 <a href="README.zh-CN.md">中文</a>
 </p>
 
-<!-- SOURCE-REVISION: 2823042224 -->
+<!-- SOURCE-REVISION: 4076626307 -->
 
 ---
 
@@ -678,6 +678,7 @@ Sao chép các file sao lưu ra ngoài máy thuê trước khi xóa máy.
 
 | Triệu chứng | Nguyên nhân có thể | Chẩn đoán | Bước tiếp theo |
 |---|---|---|---|
+| `sudo: command not found` khi cài đặt | Container tối giản từ nhà cung cấp thường không có sudo | `id -u`; `command -v sudo` | Đang chạy bằng root? Bộ công tự chạy các lệnh cần quyền trực tiếp — không cần sudo. Không phải root? Chạy lại bằng root, hoặc cài sudo (`apt-get install -y sudo`) |
 | Không phát hiện NVIDIA GPU | Sai máy/image, GPU không gắn, hoặc vấn đề từ nhà cung cấp | `nvidia-smi` | Xác nhận gói thuê có NVIDIA GPU và hỏi nhà cung cấp về passthrough |
 | CUDA không khả dụng | Driver, CUDA/PyTorch lệch phiên bản, hoặc môi trường hỏng | `nvidia-smi`; `~/ai/venv/bin/python -c 'import torch; print(torch.cuda.is_available())'` | Xem log thiết lập; không tự cài driver bất kỳ lên image của nhà cung cấp |
 | SSH từ chối kết nối | Sai IP/port, firewall, hoặc dịch vụ SSH không khả dụng | `ssh -vvv -p PORT user@SERVER_IP` | Kiểm tra thông tin kết nối của nhà cung cấp và mở đúng port SSH |
@@ -686,6 +687,7 @@ Sao chép các file sao lưu ra ngoài máy thuê trước khi xóa máy.
 | Hết dung lượng đĩa | Model/cache/log lấp đầy đĩa thuê | `df -h`; `du -sh ~/ai/*` | Xóa model/cache không dùng hoặc thuê đĩa lớn hơn |
 | Docker GPU không khả dụng | Docker hoặc NVIDIA Container Toolkit thiếu/không tương thích | `docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi` | Dùng chạy native, hoặc cài các thành phần Docker GPU tương thích nhà cung cấp |
 | Không truy cập được API | Dịch vụ dừng, sai port, hoặc thiếu tunnel | `curl http://127.0.0.1:8080/health`; `ss -ltnp` | Kiểm tra `ai-logs`, khởi động đúng runtime và xác minh SSH tunnel |
+| Setup treo khi khởi động dịch vụ | Container tối giản không có systemd | `command -v systemctl` | Dịch vụ khởi động qua runtime wrapper (`ai-start`, `llamacpp-serve`, `vllm-serve`); không cần systemd |
 | Ollama cài thất bại | Thiếu tiền đề giải nén hoặc vấn đề mạng/gói | `command -v zstd`; `cat ~/ai/logs/setup-*.log` | Chạy lại bootstrap; zstd được xử lý tự động trên hệ thống có package-manager hỗ trợ |
 | Windows: script không chạy | Chính sách thực thi PowerShell | `Get-ExecutionPolicy -Scope CurrentUser` | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, rồi chạy lại `bootstrap.ps1` |
 | Windows: thiếu winget | Bản Windows cũ không có App Installer | `winget --version` trong PowerShell | Cài Git/SSH thủ công (git-scm.com, khả năng OpenSSH) và chạy lại `-CheckOnly` |

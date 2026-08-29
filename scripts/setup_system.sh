@@ -11,14 +11,23 @@ C_RESET='\033[0m'; C_BOLD='\033[1m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'
 
 # =============================================================================
 # install_base_packages — install essential utilities
+# Privileges: uses the shared abstraction (scripts/privileges.sh). Running as
+# root (typical on rented GPU containers) executes commands directly — sudo is
+# never required or invoked. Non-root uses sudo when present, else fails.
 # =============================================================================
 install_base_packages() {
     echo -e "${C_BOLD}[system]${C_RESET} Installing base packages..."
 
+    # Resolve privileges via the shared helper (root -> SUDO="", no sudo call).
+    # Non-root without sudo is a clear failure: base packages are essential.
+    # shellcheck source=privileges.sh
+    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/privileges.sh"
+    require_privileges || return 1
+
     if command -v apt-get &>/dev/null; then
         export DEBIAN_FRONTEND=noninteractive
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq \
+        ${SUDO} apt-get update -qq
+        ${SUDO} apt-get install -y -qq \
             curl wget git build-essential \
             htop tmux jq python3 python3-pip python3-venv \
             ca-certificates gnupg lsb-release \
@@ -26,17 +35,17 @@ install_base_packages() {
 
         # Ensure python3 → python
         if ! command -v python &>/dev/null && command -v python3 &>/dev/null; then
-            sudo update-alternatives --install /usr/bin/python python /usr/bin/python3 1 2>/dev/null || true
+            ${SUDO} update-alternatives --install /usr/bin/python python /usr/bin/python3 1 2>/dev/null || true
         fi
 
         echo -e "${C_GREEN}[OK]${C_RESET} Base packages installed."
 
     elif command -v dnf &>/dev/null; then
-        sudo dnf install -y curl wget git htop tmux jq python3 python3-pip pciutils 2>/dev/null || true
+        ${SUDO} dnf install -y curl wget git htop tmux jq python3 python3-pip pciutils 2>/dev/null || true
         echo -e "${C_GREEN}[OK]${C_RESET} Base packages installed (dnf)."
 
     elif command -v yum &>/dev/null; then
-        sudo yum install -y curl wget git htop tmux jq python3 python3-pip pciutils 2>/dev/null || true
+        ${SUDO} yum install -y curl wget git htop tmux jq python3 python3-pip pciutils 2>/dev/null || true
         echo -e "${C_GREEN}[OK]${C_RESET} Base packages installed (yum)."
 
     else

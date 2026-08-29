@@ -9,6 +9,10 @@ fi
 
 C_RESET='\033[0m'; C_BOLD='\033[1m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'; C_RED='\033[0;31m'
 
+# Shared privilege abstraction — root containers run without sudo
+# shellcheck source=privileges.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/privileges.sh"
+
 OLLAMA_INSTALLED="no"
 OLLAMA_STATUS="NOT INSTALLED"
 OLLAMA_FAILURE_REASON=""
@@ -25,35 +29,29 @@ ensure_zstd() {
     echo -e "${C_BOLD}[ollama]${C_RESET} Installing required prerequisite: zstd..."
 
     if command -v apt-get &>/dev/null; then
-        local apt_cmd="apt-get"
-        if [[ "${EUID}" -ne 0 ]]; then
-            if command -v sudo &>/dev/null; then
-                apt_cmd="sudo apt-get"
-            else
-                echo -e "${C_RED}[ERROR]${C_RESET} zstd is missing and neither root nor sudo is available."
-                return 1
-            fi
+        if ! require_privileges; then
+            echo -e "${C_RED}[ERROR]${C_RESET} zstd is missing and neither root nor sudo is available."
+            return 1
         fi
-        if [[ "${apt_cmd}" == "sudo apt-get" ]]; then
-            if ! sudo apt-get update -qq || ! sudo apt-get install -y -qq zstd; then
-                echo -e "${C_RED}[ERROR]${C_RESET} Could not install zstd with apt-get."
-                return 1
-            fi
-        elif ! apt-get update -qq || ! apt-get install -y -qq zstd; then
+        if ! ${SUDO} apt-get update -qq || ! ${SUDO} apt-get install -y -qq zstd; then
             echo -e "${C_RED}[ERROR]${C_RESET} Could not install zstd with apt-get."
             return 1
         fi
     elif command -v dnf &>/dev/null; then
-        local dnf_cmd="dnf"
-        [[ "${EUID}" -ne 0 ]] && dnf_cmd="sudo dnf"
-        if ! ${dnf_cmd} install -y zstd; then
+        if ! require_privileges; then
+            echo -e "${C_RED}[ERROR]${C_RESET} zstd is missing and neither root nor sudo is available."
+            return 1
+        fi
+        if ! ${SUDO} dnf install -y zstd; then
             echo -e "${C_RED}[ERROR]${C_RESET} Could not install zstd with dnf."
             return 1
         fi
     elif command -v yum &>/dev/null; then
-        local yum_cmd="yum"
-        [[ "${EUID}" -ne 0 ]] && yum_cmd="sudo yum"
-        if ! ${yum_cmd} install -y zstd; then
+        if ! require_privileges; then
+            echo -e "${C_RED}[ERROR]${C_RESET} zstd is missing and neither root nor sudo is available."
+            return 1
+        fi
+        if ! ${SUDO} yum install -y zstd; then
             echo -e "${C_RED}[ERROR]${C_RESET} Could not install zstd with yum."
             return 1
         fi
@@ -145,21 +143,22 @@ configure_ollama() {
 
     mkdir -p "${ollama_models}"
 
-    # Configure via systemd override
-    if command -v systemctl &>/dev/null && systemctl is-active ollama &>/dev/null 2>&1; then
-        sudo systemctl stop ollama 2>/dev/null || true
+    # Configure via systemd override (only when systemd actually manages ollama)
+    if command -v systemctl &>/dev/null && [[ -d /run/systemd/system ]] \
+        && systemctl is-active ollama &>/dev/null 2>&1; then
+        ${SUDO} systemctl stop ollama 2>/dev/null || true
 
-        sudo mkdir -p /etc/systemd/system/ollama.service.d
-        sudo tee /etc/systemd/system/ollama.service.d/override.conf >/dev/null <<OLLAMA_OVERRIDE
+        ${SUDO} mkdir -p /etc/systemd/system/ollama.service.d
+        ${SUDO} tee /etc/systemd/system/ollama.service.d/override.conf >/dev/null <<OLLAMA_OVERRIDE
 [Service]
 Environment="OLLAMA_HOST=${OLLAMA_HOST:-127.0.0.1:11434}"
 Environment="OLLAMA_MODELS=${ollama_models}"
 Environment="OLLAMA_KEEP_ALIVE=${OLLAMA_KEEP_ALIVE:-5m}"
 OLLAMA_OVERRIDE
 
-        sudo systemctl daemon-reload
-        sudo systemctl enable ollama 2>/dev/null || true
-        sudo systemctl start ollama 2>/dev/null || true
+        ${SUDO} systemctl daemon-reload
+        ${SUDO} systemctl enable ollama 2>/dev/null || true
+        ${SUDO} systemctl start ollama 2>/dev/null || true
     else
         # Non-systemd: set env vars and start manually
         export OLLAMA_HOST="${OLLAMA_HOST:-127.0.0.1:11434}"

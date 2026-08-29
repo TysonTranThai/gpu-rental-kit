@@ -2,7 +2,7 @@
   🇬🇧 <a href="README.md">English</a> &nbsp;|&nbsp; 🇻🇳 <a href="README.vi.md">Tiếng Việt</a> &nbsp;|&nbsp; 🇨🇳 <a href="README.zh-CN.md">中文</a>
 </p>
 
-<!-- SOURCE-REVISION: 2823042224 -->
+<!-- SOURCE-REVISION: 4076626307 -->
 
 ---
 
@@ -678,6 +678,7 @@ ai-backup --list
 
 | 症状 | 可能原因 | 诊断 | 下一步 |
 |---|---|---|---|
+| 安装时报 `sudo: command not found` | 服务商的最小化容器通常不带 sudo | `id -u`；`command -v sudo` | 以 root 运行？工具包会直接执行特权命令——无需 sudo。非 root？请以 root 重新运行，或安装 sudo（`apt-get install -y sudo`） |
 | 未检测到 NVIDIA GPU | 机器/镜像不对、GPU 未挂载或服务商问题 | `nvidia-smi` | 确认租用包含 NVIDIA GPU，并向服务商询问直通（passthrough） |
 | CUDA 不可用 | 驱动、CUDA/PyTorch 不匹配或环境损坏 | `nvidia-smi`；`~/ai/venv/bin/python -c 'import torch; print(torch.cuda.is_available())'` | 查看搭建日志；不要随意在服务商镜像上安装驱动 |
 | SSH 连接被拒绝 | IP/端口错误、防火墙或 SSH 服务不可用 | `ssh -vvv -p PORT user@SERVER_IP` | 核对服务商连接信息并放行配置的 SSH 端口 |
@@ -686,6 +687,7 @@ ai-backup --list
 | 磁盘空间不足 | 模型/缓存/日志填满租用磁盘 | `df -h`；`du -sh ~/ai/*` | 删除不用的模型/缓存，或租更大的磁盘 |
 | Docker GPU 不可用 | Docker 或 NVIDIA Container Toolkit 缺失/不兼容 | `docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi` | 使用原生执行，或安装与服务商兼容的 Docker GPU 组件 |
 | 无法访问 API | 服务停止、端口错误或缺少隧道 | `curl http://127.0.0.1:8080/health`；`ss -ltnp` | 检查 `ai-logs`，启动正确的运行时并验证 SSH 隧道 |
+| 安装在启动服务时卡住 | 最小化容器没有 systemd | `command -v systemctl` | 服务通过运行时包装器启动（`ai-start`、`llamacpp-serve`、`vllm-serve`）；无需 systemd |
 | Ollama 安装失败 | 缺少解压前置条件或网络/软件包问题 | `command -v zstd`；`cat ~/ai/logs/setup-*.log` | 重新运行 bootstrap；zstd 在受支持的包管理系统上会自动处理 |
 | Windows：脚本无法运行 | PowerShell 执行策略 | `Get-ExecutionPolicy -Scope CurrentUser` | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`，然后重跑 `bootstrap.ps1` |
 | Windows：缺少 winget | 没有 App Installer 的旧版 Windows | 在 PowerShell 中运行 `winget --version` | 手动安装 Git/SSH（git-scm.com、OpenSSH 功能）并重跑 `-CheckOnly` |

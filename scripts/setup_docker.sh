@@ -9,6 +9,10 @@ fi
 
 C_RESET='\033[0m'; C_BOLD='\033[1m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'; C_RED='\033[0;31m'
 
+# Shared privilege abstraction — root containers run without sudo
+# shellcheck source=privileges.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/privileges.sh"
+
 HAS_DOCKER="no"
 DOCKER_GPU_OK="no"
 
@@ -19,6 +23,9 @@ detect_docker() {
     if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
         HAS_DOCKER="yes"
         echo -e "${C_GREEN}[OK]${C_RESET} Docker is installed and running."
+    elif command -v docker &>/dev/null; then
+        HAS_DOCKER="no"
+        echo -e "${C_YELLOW}[WARN]${C_RESET} Docker CLI found but daemon is not reachable."
     else
         HAS_DOCKER="no"
     fi
@@ -46,16 +53,21 @@ install_docker() {
         return 0
     fi
 
+    if ! require_privileges; then
+        echo -e "${C_YELLOW}[SKIP]${C_RESET} No root/sudo available — cannot install Docker automatically."
+        return 0
+    fi
+
     # Official Docker install script (most reliable)
     if command -v curl &>/dev/null; then
         curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
-        sudo sh /tmp/get-docker.sh 2>/dev/null || true
+        ${SUDO} sh /tmp/get-docker.sh 2>/dev/null || true
         rm -f /tmp/get-docker.sh
     fi
 
-    # Add user to docker group
-    if getent group docker &>/dev/null; then
-        sudo usermod -aG docker "${USER}" 2>/dev/null || true
+    # Add user to docker group (root has no need; harmless otherwise)
+    if [[ "$(id -u)" -ne 0 ]] && getent group docker &>/dev/null; then
+        ${SUDO} usermod -aG docker "${USER}" 2>/dev/null || true
     fi
 
     # Verify
@@ -99,25 +111,30 @@ install_nvidia_container_toolkit() {
         return 0
     fi
 
+    if ! require_privileges; then
+        echo -e "${C_YELLOW}[SKIP]${C_RESET} No root/sudo available — cannot install NVIDIA Container Toolkit."
+        return 0
+    fi
+
     # Add NVIDIA container toolkit repo
     curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-        | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null || true
+        | ${SUDO} gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null || true
 
     curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
         | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-        | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
+        | ${SUDO} tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null
 
-    sudo apt-get update -qq 2>/dev/null || true
-    sudo apt-get install -y -qq nvidia-container-toolkit 2>/dev/null || true
+    ${SUDO} apt-get update -qq 2>/dev/null || true
+    ${SUDO} apt-get install -y -qq nvidia-container-toolkit 2>/dev/null || true
 
     # Configure Docker to use nvidia runtime
     if command -v nvidia-ctk &>/dev/null; then
-        sudo nvidia-ctk runtime configure --runtime=docker 2>/dev/null || true
+        ${SUDO} nvidia-ctk runtime configure --runtime=docker 2>/dev/null || true
     fi
 
-    # Restart Docker
-    if command -v systemctl &>/dev/null; then
-        sudo systemctl restart docker 2>/dev/null || true
+    # Restart Docker — systemd only; containers start the daemon their own way
+    if command -v systemctl &>/dev/null && [[ -d /run/systemd/system ]]; then
+        ${SUDO} systemctl restart docker 2>/dev/null || true
     fi
 
     # Verify GPU passthrough

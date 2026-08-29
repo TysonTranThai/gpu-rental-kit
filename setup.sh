@@ -129,7 +129,7 @@ write_machine_report() {
         fi
     fi
 
-    local docker_status="${HAS_DOCKER:-no}"
+    local docker_status="Docker CLI: $([[ "${HAS_DOCKER:-no}" == "yes" ]] && echo yes || echo no), daemon: $([[ "${HAS_DOCKER:-no}" == "yes" ]] && echo reachable || echo not-reachable), container env: ${IS_DOCKER:-no}"
     local nctk_status="not installed"
     if command -v nvidia-container-toolkit &>/dev/null || command -v nvidia-ctk &>/dev/null; then
         nctk_status="installed"
@@ -198,12 +198,15 @@ log_info "Log file: ${LOG_FILE}"
 echo ""
 
 # =============================================================================
-# Step 1: Check privileges
+# Step 1: Check privileges (shared abstraction: scripts/privileges.sh)
 # =============================================================================
 echo -e "${C_BOLD}[1/15] Checking privileges...${C_RESET}"
+# shellcheck source=scripts/privileges.sh
+source "${SCRIPT_DIR}/scripts/privileges.sh"
 if [[ "${EUID}" -eq 0 ]]; then
     log_info "Running as root."
     SUDO=""
+    export SUDO
 elif command -v sudo &>/dev/null && sudo -n true 2>/dev/null; then
     log_info "Running as ${USER} with passwordless sudo."
     SUDO="sudo"
@@ -215,10 +218,11 @@ elif command -v sudo &>/dev/null; then
     export SUDO
     sudo -v
 else
-    echo -e "${C_RED}[ERROR]${C_RESET} No sudo available. Some steps require root."
-    echo -e "  Continue in non-root mode where possible..."
-    SUDO=""
-    export SUDO
+    echo -e "${C_RED}[ERROR]${C_RESET} No sudo available and not running as root."
+    echo -e "  Privileged steps (package install, Docker config) cannot run."
+    echo -e "  Fix: rerun as root (rented GPU containers usually run as root),"
+    echo -e "       or install sudo: apt-get install -y sudo"
+    exit 1
 fi
 log_info "Privilege check complete (SUDO='${SUDO}')."
 
@@ -241,7 +245,7 @@ fi
 # =============================================================================
 echo -e "${C_BOLD}[3/15] Checking container/virtualization...${C_RESET}"
 detect_virtualization
-log_info "Docker: ${IS_DOCKER}, VM: ${IS_VM}, WSL: ${IS_WSL}"
+log_info "Container environment: ${IS_DOCKER}, VM: ${IS_VM}, WSL: ${IS_WSL}"
 
 # =============================================================================
 # Step 4: Detect GPU
@@ -276,7 +280,7 @@ fi
 echo -e "${C_BOLD}[5/15] Checking NVIDIA driver...${C_RESET}"
 if [[ "${HAS_NVIDIA_GPU}" == "yes" ]] && [[ "${NVIDIA_DRIVER_OK}" != "yes" ]]; then
     echo -e "${C_RED}[ERROR]${C_RESET} NVIDIA GPU detected but driver not working."
-    echo -e "  Install the driver with: sudo apt install -y nvidia-driver-550"
+    echo -e "  Install the driver as root: apt install -y nvidia-driver-550 (or via sudo if available)"
     echo -e "  Then reboot and re-run ./bootstrap.sh"
     echo ""
     echo -e "  ${C_YELLOW}This toolkit will NOT automatically install NVIDIA drivers.${C_RESET}"
@@ -325,7 +329,14 @@ echo -e "${C_BOLD}[8/15] Checking Docker...${C_RESET}"
 # shellcheck source=scripts/setup_docker.sh
 source "${SCRIPT_DIR}/scripts/setup_docker.sh"
 detect_docker
-log_info "Docker: ${HAS_DOCKER}"
+if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+    log_info "Docker CLI: yes, Docker daemon: reachable"
+elif command -v docker &>/dev/null; then
+    log_info "Docker CLI: yes, Docker daemon: NOT reachable"
+else
+    log_info "Docker CLI: no, Docker daemon: no"
+fi
+log_info "Container environment: ${IS_DOCKER}"
 
 # =============================================================================
 # Step 9: Detect persistent storage

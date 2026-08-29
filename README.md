@@ -2,7 +2,7 @@
   🇬🇧 <a href="README.md">English</a> &nbsp;|&nbsp; 🇻🇳 <a href="README.vi.md">Tiếng Việt</a> &nbsp;|&nbsp; 🇨🇳 <a href="README.zh-CN.md">中文</a>
 </p>
 
-<!-- SOURCE-REVISION: 2823042224 -->
+<!-- SOURCE-REVISION: 4076626307 -->
 
 ---
 
@@ -678,6 +678,7 @@ Copy the resulting backup files to storage outside the rental before deleting th
 
 | Symptom | Likely cause | Diagnose | Next step |
 |---|---|---|---|
+| `sudo: command not found` during setup | Minimal provider containers often ship without sudo | `id -u`; `command -v sudo` | Running as root? The toolkit runs privileged commands directly — no sudo needed. Non-root? Rerun as root, or install sudo (`apt-get install -y sudo`) |
 | No NVIDIA GPU detected | Wrong machine/image, GPU not attached, or provider issue | `nvidia-smi` | Confirm the rental includes an NVIDIA GPU and ask the provider about passthrough |
 | CUDA unavailable | Driver, CUDA/PyTorch mismatch, or broken environment | `nvidia-smi`; `~/ai/venv/bin/python -c 'import torch; print(torch.cuda.is_available())'` | Review the setup log; do not install a random driver over a provider image |
 | SSH connection refused | Wrong IP/port, firewall, or SSH service unavailable | `ssh -vvv -p PORT user@SERVER_IP` | Verify provider connection details and allow the configured SSH port |
@@ -686,6 +687,7 @@ Copy the resulting backup files to storage outside the rental before deleting th
 | Out of disk space | Models/cache/logs filled the rental disk | `df -h`; `du -sh ~/ai/*` | Remove unused models/cache or rent a larger disk |
 | Docker GPU unavailable | Docker or NVIDIA Container Toolkit is missing/incompatible | `docker run --rm --gpus all nvidia/cuda:12.4.0-base-ubuntu22.04 nvidia-smi` | Use native execution, or install the provider-compatible Docker GPU components |
 | API cannot be reached | Service stopped, wrong port, or tunnel missing | `curl http://127.0.0.1:8080/health`; `ss -ltnp` | Check `ai-logs`, start the correct runtime, and verify the SSH tunnel |
+| Setup hangs on service start | Minimal containers have no systemd | `command -v systemctl` | Services start via runtime wrappers (`ai-start`, `llamacpp-serve`, `vllm-serve`); no systemd required |
 | Ollama fails to install | Missing extraction prerequisite or network/package issue | `command -v zstd`; `cat ~/ai/logs/setup-*.log` | Rerun bootstrap; zstd is handled automatically on supported package-manager systems |
 | Windows: script won't run | PowerShell execution policy | `Get-ExecutionPolicy -Scope CurrentUser` | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, then rerun `bootstrap.ps1` |
 | Windows: winget missing | Older Windows build without App Installer | `winget --version` in PowerShell | Install Git/SSH manually (git-scm.com, OpenSSH capability) and rerun `-CheckOnly` |

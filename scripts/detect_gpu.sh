@@ -473,7 +473,7 @@ print_gpu_summary() {
         echo "If you believe this is incorrect, check: nvidia-smi"
     elif [[ "${NVIDIA_DRIVER_OK}" != "yes" ]]; then
         echo -e "${C_YELLOW}[WARN]${C_RESET} NVIDIA GPU detected but nvidia-smi is not working."
-        echo "Run: sudo apt install -y nvidia-driver-550"
+        echo "Run as root: apt install -y nvidia-driver-550 (or via sudo if available)"
     fi
     echo ""
 }

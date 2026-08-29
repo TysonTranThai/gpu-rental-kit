@@ -234,7 +234,7 @@ print_environment_summary() {
     printf "  %-20s %s\n" "Kernel:"      "$(uname -r 2>/dev/null || echo 'N/A')"
     printf "  %-20s %s\n" "Architecture:" "$(uname -m 2>/dev/null || echo 'N/A')"
     printf "  %-20s %s\n" "Architecture:" "$(uname -m)"
-    printf "  %-20s %s\n" "Docker env?:" "${IS_DOCKER}"
+    printf "  %-20s %s\n" "Container env?:" "${IS_DOCKER}"
     printf "  %-20s %s\n" "VM?:"         "${IS_VM}"
     printf "  %-20s %s\n" "WSL?:"        "${IS_WSL}"
     echo ""
