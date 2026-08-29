@@ -23,9 +23,10 @@ show_menu() {
     echo "  3. llama.cpp"
     echo "  4. GPU status"
     echo "  5. Model list"
-    echo "  6. Exit"
+    echo "  6. AI routers (9Router/OmniRoute)"
+    echo "  7. Exit"
     echo ""
-    echo -n "  Choose [1-6]: "
+    echo -n "  Choose [1-7]: "
 }
 
 # =============================================================================
@@ -240,7 +241,14 @@ else
             5)
                 show_models
                 ;;
-            6|q|quit|exit)
+            6)
+                if [[ -f "${SCRIPT_DIR}/bin/ai-router" ]]; then
+                    bash "${SCRIPT_DIR}/bin/ai-router" status
+                else
+                    echo -e "${C_YELLOW}ai-router not available.${C_RESET}"
+                fi
+                ;;
+            7|q|quit|exit)
                 echo -e "${C_GREEN}Bye!${C_RESET}"
                 exit 0
                 ;;

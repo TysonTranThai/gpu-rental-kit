@@ -250,17 +250,89 @@ done
 
 REMOTE_GPU="no"
 AUTO_CONFIRM="no"
+SELECTED_LANG=""
 EXTRA_ARGS=()
 for arg in "$@"; do
     case "${arg}" in
         --remote-gpu) REMOTE_GPU="yes" ;;
         -y|--yes|--auto) AUTO_CONFIRM="yes" ;;
         --interactive) AUTO_CONFIRM="no" ;;
-        *) EXTRA_ARGS+=("${arg}") ;;
+        --lang) LANG_NEXT="pending" ;;
+        *)
+            if [[ "${LANG_NEXT:-}" == "pending" ]]; then
+                SELECTED_LANG="${arg}"
+                LANG_NEXT=""
+            else
+                EXTRA_ARGS+=("${arg}")
+            fi
+            ;;
     esac
 done
+unset LANG_NEXT
 
 PLATFORM="$(uname -s)"
+
+# ── Language selection (FIRST interactive step, before any setup output) ─
+# Only on the Linux setup path; macOS dev menu stays English (developer tool).
+if [[ "${PLATFORM}" != "Darwin" ]]; then
+    # shellcheck source=scripts/i18n.sh
+    source "${SCRIPT_DIR}/scripts/i18n.sh"
+    if [[ -n "${SELECTED_LANG}" ]]; then
+        # Explicit --lang: validate, no selector shown
+        if ! i18n_is_supported "${SELECTED_LANG}"; then
+            i18n_init
+            echo -e "${C_RED}[ERROR]${C_RESET} $(tr LANGUAGE_INVALID "${SELECTED_LANG}")"
+            exit 1
+        fi
+        i18n_init "${SELECTED_LANG}"
+        i18n_save_language "${SELECTED_LANG}" || true
+    elif [[ -n "${GPU_KIT_LANG:-}" ]]; then
+        # Environment variable wins over saved preference; no prompt
+        i18n_init
+        i18n_save_language "${I18N_LANG}" || true
+    else
+        # Interactive: show selector (or offer saved language)
+        i18n_init
+        local_saved="$(i18n_saved_language)"
+        if i18n_is_supported "${local_saved}" && [[ "${AUTO_CONFIRM}" != "yes" ]]; then
+            # Offer saved preference non-annoyingly (default Yes)
+            printf "$(tr LANGUAGE_USE_SAVED "${local_saved}") [Y/n] "
+            read -r answer
+            case "${answer}" in
+                n|N|no|NO) ;;  # fall through to full selector
+                *) i18n_load_catalog "${local_saved}" ;;
+            esac
+        fi
+        if [[ "${I18N_LANG}" == "en" && "${local_saved}" != "en" ]]; then
+            echo -e "${C_BOLD}$(tr SELECT_LANGUAGE_PROMPT)${C_RESET}"
+            echo ""
+            local i=1 codes=()
+            while IFS= read -r code; do
+                codes+=("${code}")
+                case "${code}" in
+                    en)    echo "  ${i}) \U0001F1EC\U0001F1E7 English" ;;
+                    vi)    echo "  ${i}) \U0001F1FB\U0001F1F3 Ti\u1ebfng Vi\u1ec7t" ;;
+                    zh-CN) echo "  ${i}) \U0001F1E8\U0001F1F3 中文" ;;
+                    *)     echo "  ${i}) ${code}" ;;
+                esac
+                i=$((i + 1))
+            done < <(i18n_supported_languages)
+            echo ""
+            printf "Choice [1-%d]: " "$((i - 1))"
+            read -r lang_choice
+            if [[ "${lang_choice}" =~ ^[0-9]+$ ]] && [[ "${lang_choice}" -ge 1 ]] && [[ "${lang_choice}" -le ${#codes[@]} ]]; then
+                SELECTED_LANG="${codes[$((lang_choice - 1))]}"
+            else
+                SELECTED_LANG="en"
+            fi
+            i18n_load_catalog "${SELECTED_LANG}"
+            i18n_save_language "${SELECTED_LANG}" || true
+            echo ""
+        fi
+    fi
+    echo "$(tr LANGUAGE_SAVED "$(i18n_lang)")"
+    echo ""
+fi
 
 if [[ "${PLATFORM}" == "Darwin" ]]; then
     if [[ "${REMOTE_GPU}" == "yes" ]]; then
@@ -306,7 +378,8 @@ fi
 SETUP_ARGS+=("${EXTRA_ARGS[@]}")
 
 export AUTO_CONFIRM
-echo -e "${C_BOLD}Running setup...${C_RESET}"
+export GPU_KIT_LANG_ACTIVE="${I18N_LANG:-en}"
+echo -e "${C_BOLD}$(tr INSTALLER_TITLE 2>/dev/null || echo "Running setup...") — $(tr STAGE_PRIVILEGES 2>/dev/null || echo "setup")...${C_RESET}"
 echo ""
 bash "${SCRIPT_DIR}/setup.sh" "${SETUP_ARGS[@]}"
 exit $?

@@ -451,6 +451,11 @@ install_docker
 install_nvidia_container_toolkit
 verify_docker_gpu
 
+# AI Routers (9Router + OmniRoute, optional; failures warn but don't abort)
+# shellcheck source=scripts/setup_routers.sh
+source "${SCRIPT_DIR}/scripts/setup_routers.sh"
+run_routers_setup || log_warn "One or more AI routers failed to install/start (non-fatal)."
+
 # =============================================================================
 # Write machine config report
 # =============================================================================
@@ -480,6 +485,15 @@ VLLM_INSTALLED="${VLLM_INSTALLED:-no}"
 LLAMACPP_INSTALLED="${LLAMACPP_INSTALLED:-no}"
 PYTORCH_INSTALLED="${PYTORCH_INSTALLED:-no}"
 PYTORCH_CUDA_AVAILABLE="${PYTORCH_CUDA_AVAILABLE:-no}"
+
+# --- AI Routers ---
+ROUTER_9ROUTER_ENABLED="${ROUTER_9ROUTER_ENABLED:-yes}"
+ROUTER_OMNIROUTE_ENABLED="${ROUTER_OMNIROUTE_ENABLED:-yes}"
+ROUTER_9ROUTER_PORT="${ROUTER_9ROUTER_PORT:-20128}"
+ROUTER_OMNIROUTE_PORT="${ROUTER_OMNIROUTE_PORT:-20128}"
+ROUTER_9ROUTER_STATUS="${ROUTER_9ROUTER_STATUS:-unknown}"
+ROUTER_OMNIROUTE_STATUS="${ROUTER_OMNIROUTE_STATUS:-unknown}"
+ROUTER_NPM_PREFIX="${ROUTER_NPM_PREFIX:-${AI_HOME}/routers/npm-global}"
 EOF
 
 # =============================================================================
@@ -488,7 +502,7 @@ EOF
 echo -e "${C_BOLD}[final] Installing management commands...${C_RESET}"
 
 # Copy/symlink bin commands into AI_HOME/bin
-for cmd in gpu-status gpu-test model-list model-download model-run model-stop model-logs ai-start ai-stop ai-logs ai-info ai-backup; do
+for cmd in gpu-status gpu-test model-list model-download model-run model-stop model-logs ai-start ai-stop ai-logs ai-info ai-backup ai-router; do
     if [[ -f "${SCRIPT_DIR}/bin/${cmd}" ]]; then
         cp -f "${SCRIPT_DIR}/bin/${cmd}" "${AI_BIN_DIR}/${cmd}" 2>/dev/null || true
         chmod +x "${AI_BIN_DIR}/${cmd}" 2>/dev/null || true

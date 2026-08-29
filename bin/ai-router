@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# =============================================================================
+# ai-router — manage 9Router and OmniRoute services
+# =============================================================================
+# Usage:
+#   ai-router status [9router|omniroute]   Show service status (default: all)
+#   ai-router start  [9router|omniroute]   Start service (default: all)
+#   ai-router stop   [9router|omniroute]   Stop service (default: all)
+#   ai-router logs   [9router|omniroute]   Tail service log (default: all, last 50)
+#   ai-router health [9router|omniroute]   HTTP health probe
+#
+# Configuration (env or config/defaults.env):
+#   ROUTER_9ROUTER_ENABLED / ROUTER_OMNIROUTE_ENABLED   yes|no
+#   ROUTER_9ROUTER_PORT   / ROUTER_OMNIROUTE_PORT       default 20128
+#   ROUTER_BIND_ADDRESS                                 default 127.0.0.1
+# =============================================================================
+set -Eeuo pipefail
+
+AI_HOME="${AI_HOME:-${HOME}/ai}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+C_RESET='\033[0m'; C_BOLD='\033[1m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'; C_RED='\033[0;31m'; C_CYAN='\033[0;36m'
+
+# Load defaults + router module (for shared helpers)
+# shellcheck source=config/defaults.env
+[[ -f "${SCRIPT_DIR}/config/defaults.env" ]] && source "${SCRIPT_DIR}/config/defaults.env"
+# shellcheck source=scripts/setup_routers.sh
+source "${SCRIPT_DIR}/scripts/setup_routers.sh"
+
+ROUTER_STATE_DIR="${ROUTER_STATE_DIR:-${AI_HOME}/routers}"
+ROUTER_LOG_DIR="${ROUTER_LOG_DIR:-${AI_HOME}/logs}"
+
+# -----------------------------------------------------------------------------
+usage() {
+    cat <<'USAGE'
+Usage: ai-router <command> [service]
+
+Commands:
+  status  [9router|omniroute]   Show service status (default: all)
+  start   [9router|omniroute]   Start service (default: all)
+  stop    [9router|omniroute]   Stop service (default: all)
+  logs    [9router|omniroute]   Show recent log output (default: all)
+  health  [9router|omniroute]   Probe the HTTP endpoint
+
+Services default to both. Ports/bind address come from config/defaults.env.
+USAGE
+}
+
+# -----------------------------------------------------------------------------
+router_pidfile() { echo "${ROUTER_STATE_DIR}/$1.pid"; }
+router_logfile() { echo "${ROUTER_LOG_DIR}/$1.log"; }
+router_port_of() {
+    case "$1" in
+        9router)   echo "${ROUTER_9ROUTER_PORT:-20128}" ;;
+        omniroute) echo "${ROUTER_OMNIROUTE_PORT:-20128}" ;;
+    esac
+}
+router_enabled() {
+    case "$1" in
+        9router)   [[ "${ROUTER_9ROUTER_ENABLED:-yes}" == "yes" ]] ;;
+        omniroute) [[ "${ROUTER_OMNIROUTE_ENABLED:-yes}" == "yes" ]] ;;
+    esac
+}
+
+# -----------------------------------------------------------------------------
+do_status() {
+    local svc
+    for svc in 9router omniroute; do
+        local pid_file port running="STOPPED" pid=""
+        pid_file="$(router_pidfile "${svc}")"
+        port="$(router_port_of "${svc}")"
+        [[ -f "${pid_file}" ]] && pid="$(cat "${pid_file}" 2>/dev/null || true)"
+        if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+            running="RUNNING (pid ${pid})"
+        elif port_in_use "${port}"; then
+            running="RUNNING (external process on port ${port})"
+        fi
+        local enabled=""
+        router_enabled "${svc}" || enabled=" ${C_YELLOW}[disabled]${C_RESET}"
+        printf "  ${C_BOLD}%-10s${C_RESET} port %-5s %s%s\n" "${svc}" "${port}" "${running}" "${enabled}"
+    done
+}
+
+# -----------------------------------------------------------------------------
+do_start() {
+    local target="${1:-all}" svc
+    for svc in 9router omniroute; do
+        [[ "${target}" != "all" && "${target}" != "${svc}" ]] && continue
+        if ! router_enabled "${svc}"; then
+            echo -e "  ${C_YELLOW}[SKIP]${C_RESET} ${svc} is disabled (ROUTER_${svc^^}_ENABLED=no)"
+            continue
+        fi
+        local port; port="$(router_port_of "${svc}")"
+        if port_in_use "${port}"; then
+            echo -e "  ${C_YELLOW}[SKIP]${C_RESET} ${svc}: port ${port} already in use (nothing started)"
+            continue
+        fi
+        local prefix; prefix="$(npm_global_prefix)"
+        local bin="${prefix}/bin/${svc}"
+        if [[ ! -x "${bin}" ]]; then
+            echo -e "  ${C_RED}[MISS]${C_RESET} ${svc}: not installed (${bin})"
+            echo "         Install with: npm install -g --prefix \"${prefix}\" ${svc}"
+            continue
+        fi
+        echo -e "  ${C_BOLD}[START]${C_RESET} ${svc} on 127.0.0.1:${port} ..."
+        if start_router "${svc}" "${port}" "$(router_logfile "${svc}")"; then
+            echo $! > "$(router_pidfile "${svc}")" 2>/dev/null || true
+            echo -e "  ${C_GREEN}[OK]${C_RESET} ${svc} running: http://127.0.0.1:${port}"
+        else
+            echo -e "  ${C_RED}[FAIL]${C_RESET} ${svc} did not become ready. Log: $(router_logfile "${svc}")"
+        fi
+    done
+}
+
+# -----------------------------------------------------------------------------
+do_stop() {
+    local target="${1:-all}" svc
+    for svc in 9router omniroute; do
+        [[ "${target}" != "all" && "${target}" != "${svc}" ]] && continue
+        local pid_file pid=""
+        pid_file="$(router_pidfile "${svc}")"
+        [[ -f "${pid_file}" ]] && pid="$(cat "${pid_file}" 2>/dev/null || true)"
+        if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+            kill "${pid}" 2>/dev/null || true
+            sleep 1
+            kill -0 "${pid}" 2>/dev/null && kill -9 "${pid}" 2>/dev/null || true
+            rm -f "${pid_file}"
+            echo -e "  ${C_GREEN}[OK]${C_RESET} ${svc} stopped (pid ${pid})"
+        else
+            echo -e "  ${C_YELLOW}[SKIP]${C_RESET} ${svc}: not running under our pidfile"
+        fi
+    done
+}
+
+# -----------------------------------------------------------------------------
+do_logs() {
+    local target="${1:-all}" svc
+    for svc in 9router omniroute; do
+        [[ "${target}" != "all" && "${target}" != "${svc}" ]] && continue
+        echo -e "${C_BOLD}── ${svc} (last 50 lines) ──${C_RESET}"
+        tail -n 50 "$(router_logfile "${svc}")" 2>/dev/null || echo "  (no log yet)"
+        echo ""
+    done
+}
+
+# -----------------------------------------------------------------------------
+do_health() {
+    local target="${1:-all}" svc
+    for svc in 9router omniroute; do
+        [[ "${target}" != "all" && "${target}" != "${svc}" ]] && continue
+        local port; port="$(router_port_of "${svc}")"
+        if router_health "${port}" "/"; then
+            echo -e "  ${C_GREEN}[PASS]${C_RESET} ${svc} responds on http://127.0.0.1:${port}"
+        else
+            echo -e "  ${C_RED}[FAIL]${C_RESET} ${svc} not responding on port ${port}"
+        fi
+    done
+}
+
+# =============================================================================
+# Main
+# =============================================================================
+CMD="${1:-}"
+SVC="${2:-all}"
+
+case "${CMD}" in
+    status) do_status "${SVC}" ;;
+    start)  do_start "${SVC}" ;;
+    stop)   do_stop "${SVC}" ;;
+    logs)   do_logs "${SVC}" ;;
+    health) do_health "${SVC}" ;;
+    -h|--help|help|"") usage ;;
+    *) usage; exit 1 ;;
+esac
