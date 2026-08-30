@@ -6,6 +6,7 @@
 .env
 *.env
 !config/defaults.env
+!config/i18n/*.env
 .env.*
 !config/*.env
 # Mock GPU profiles are SAFE test fixtures (fake nvidia-smi output) — keep tracked
