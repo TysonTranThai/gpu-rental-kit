@@ -2,7 +2,7 @@
   🇬🇧 <a href="README.md">English</a> &nbsp;|&nbsp; 🇻🇳 <a href="README.vi.md">Tiếng Việt</a> &nbsp;|&nbsp; 🇨🇳 <a href="README.zh-CN.md">中文</a>
 </p>
 
-<!-- SOURCE-REVISION: 4076626307 -->
+<!-- SOURCE-REVISION: 3288716221 -->
 
 ---
 
@@ -306,6 +306,70 @@ Start with **Ollama** if you are new. It provides the simplest model download an
 
 **llama.cpp is the primary runtime in this project.** Ollama and vLLM are optional alternatives. If an optional runtime is unavailable, a working llama.cpp installation remains the important baseline.
 
+## Language selection
+
+The installer asks for your preferred language as its **first step** (before any installation output):
+
+```
+Select your language / Chọn ngôn ngữ / 选择语言
+  1) English
+  2) Tiếng Việt
+  3) 中文
+```
+
+Supported languages: `en` (English), `vi` (Tiếng Việt), `zh-CN` (简体中文).
+
+For unattended installs, pass the language explicitly or via environment variable — the selector is skipped:
+
+```bash
+./bootstrap.sh --remote-gpu --lang vi
+# or
+GPU_KIT_LANG=zh-CN ./bootstrap.sh --remote-gpu
+```
+
+Your choice is saved to `~/ai/config/language.conf` and reused on the next run (with a non-intrusive "use saved language? [Y/n]" offer). An explicit `--lang` always wins. Adding a new installer language requires only a new `config/i18n/<code>.env` catalog plus one line in `config/i18n/languages.conf` — no installer-code changes.
+
+## AI Routers (9Router + OmniRoute)
+
+Optionally, the installer can set up two OpenAI-compatible AI routers that sit in front of your model servers:
+
+| Router | What it does | Default port | Upstream |
+|---|---|---|---|
+| **9Router** | Local dashboard + OpenAI-compatible API routing | 20128 | [decolua/9router](https://github.com/decolua/9router) |
+| **OmniRoute** | Multi-provider routing dashboard | 20128 | [diegosouzapw/OmniRoute](https://github.com/diegosouzapw/OmniRoute) |
+
+Both are installed with `npm install -g` (9Router needs Node ≥ 18, OmniRoute needs Node ≥ 22 — the installer provisions Node 22 if missing), bound to `127.0.0.1` only, and health-checked before the installer reports success. If a component fails, the summary reports `INSTALL FAILED` with the reason instead of a false success.
+
+### Router management
+
+```bash
+ai-router status              # 9Router: RUNNING / OmniRoute: STOPPED / ...
+ai-router start 9router       # start one router
+ai-router stop omniroute      # stop one router
+ai-router logs 9router        # tail router logs
+ai-router health omniroute    # HTTP health probe
+```
+
+`ai-start` (menu option 6) and `ai-stop` also manage routers. Routers are optional: set `ROUTER_9ROUTER_ENABLED=no` / `ROUTER_OMNIROUTE_ENABLED=no` in `~/ai/config/defaults.env` to disable, and `ROUTER_9ROUTER_PORT` / `ROUTER_OMNIROUTE_PORT` to change ports.
+
+### Port conflicts
+
+If port 20128 is already in use, the installer asks: pick another port automatically, stop the conflicting service (after explicit confirmation), or cancel. It **never** kills an unknown process on its own.
+
+### Remote access (SSH tunnels)
+
+Routers bind to `127.0.0.1` on the GPU server. To reach them from your own computer, open an SSH tunnel:
+
+```bash
+# macOS / Linux
+ssh -N -L 20128:127.0.0.1:20128 user@SERVER_IP
+
+# Windows PowerShell
+ssh -N -L 20128:127.0.0.1:20128 user@SERVER_IP
+```
+
+Then point your browser or client at `http://127.0.0.1:20128`. Replace `SERVER_IP` with your server's address; never expose the routers on `0.0.0.0` unless you understand the security implications — the installer never opens firewall ports automatically.
+
 ## Multi-GPU support
 
 If your machine has multiple NVIDIA GPUs, gpu-rental-kit can use them together **where the selected inference runtime supports it**.
@@ -591,6 +655,7 @@ These are the commands installed into `~/ai/bin` by setup:
 | `model-stop` | Stop a running model process |
 | `ai-start` | Start Ollama, vLLM, or llama.cpp; GPU flags (`--gpus 0,1`, `--gpu 0`, ...) are delegated to model-run |
 | `ai-stop` | Stop the active AI runtime |
+| `ai-router` | Manage AI routers (9Router / OmniRoute): `status`, `start`, `stop`, `logs`, `health` |
 | `ai-info` | Show AI environment information |
 | `ai-backup` | Back up configuration; `--include-models` includes model files |
 

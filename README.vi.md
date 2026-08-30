@@ -2,7 +2,7 @@
   🇬🇧 <a href="README.md">English</a> &nbsp;|&nbsp; 🇻🇳 <a href="README.vi.md">Tiếng Việt</a> &nbsp;|&nbsp; 🇨🇳 <a href="README.zh-CN.md">中文</a>
 </p>
 
-<!-- SOURCE-REVISION: 4076626307 -->
+<!-- SOURCE-REVISION: 3288716221 -->
 
 ---
 
@@ -305,6 +305,70 @@ Bắt đầu với **Ollama** nếu bạn mới. Nó mang lại trải nghiệm 
 | **vLLM** | Serving model thông lượng cao và API tương thích OpenAI | `ai-start vllm Qwen/Qwen2.5-7B-Instruct` |
 
 **llama.cpp là runtime chính của dự án này.** Ollama và vLLM là các lựa chọn thay thế tùy chọn. Nếu runtime tùy chọn không khả dụng, một bản cài llama.cpp hoạt động vẫn là nền tảng quan trọng.
+
+## Lựa chọn ngôn ngữ
+
+Trình cài đặt sẽ hỏi ngôn ngữ bạn muốn ngay ở **bước đầu tiên** (trước khi bắt đầu bất kỳ thông tin cài đặt nào):
+
+```
+Select your language / Chọn ngôn ngữ / 选择语言
+  1) English
+  2) Tiếng Việt
+  3) 中文
+```
+
+Các ngôn ngữ được hỗ trợ: `en` (English), `vi` (Tiếng Việt), `zh-CN` (简体中文).
+
+Với cài đặt không tương tác, truyền ngôn ngữ trực tiếp hoặc qua biến môi trường — màn hình chọn ngôn ngữ sẽ bị bỏ qua:
+
+```bash
+./bootstrap.sh --remote-gpu --lang vi
+# hoặc
+GPU_KIT_LANG=zh-CN ./bootstrap.sh --remote-gpu
+```
+
+Lựa chọn của bạn được lưu vào `~/ai/config/language.conf` và được dùng lại ở lần chạy tiếp theo (kèm một câu hỏi "dùng ngôn ngữ đã lưu? [Y/n]" không làm phiền). `--lang` rõ ràng luôn được ưu tiên. Thêm một ngôn ngữ cài đặt mới chỉ cần tạo `config/i18n/<code>.env` mới cộng một dòng trong `config/i18n/languages.conf` — không cần sửa code trình cài đặt.
+
+## AI Routers (9Router + OmniRoute)
+
+Tùy chọn, trình cài đặt có thể thiết lập hai AI router tương thích OpenAI đặt trước các máy chủ model của bạn:
+
+| Router | Chức năng | Cổng mặc định | Nguồn |
+|---|---|---|---|
+| **9Router** | Dashboard cục bộ + API tương thích OpenAI | 20128 | [decolua/9router](https://github.com/decolua/9router) |
+| **OmniRoute** | Dashboard định tuyến đa nhà cung cấp | 20128 | [diegosouzapw/OmniRoute](https://github.com/diegosouzapw/OmniRoute) |
+
+Cả hai được cài bằng `npm install -g` (9Router cần Node ≥ 18, OmniRoute cần Node ≥ 22 — trình cài đặt sẽ cấp Node 22 nếu thiếu), gắn vào `127.0.0.1` và được kiểm tra sức khỏe trước khi báo thành công. Nếu một thành phần thất bại, bản tổng kết sẽ báo `INSTALL FAILED` kèm lý do thay vì báo thành công giả.
+
+### Quản lý router
+
+```bash
+ai-router status              # 9Router: RUNNING / OmniRoute: STOPPED / ...
+ai-router start 9router       # khởi động một router
+ai-router stop omniroute      # dừng một router
+ai-router logs 9router        # xem log router
+ai-router health omniroute    # kiểm tra HTTP health
+```
+
+`ai-start` (tùy chọn menu 6) và `ai-stop` cũng quản lý router. Router là tùy chọn: đặt `ROUTER_9ROUTER_ENABLED=no` / `ROUTER_OMNIROUTE_ENABLED=no` trong `~/ai/config/defaults.env` để tắt, và `ROUTER_9ROUTER_PORT` / `ROUTER_OMNIROUTE_PORT` để đổi cổng.
+
+### Xung đột cổng
+
+Nếu cổng 20128 đã được sử dụng, trình cài đặt sẽ hỏi: tự động chọn cổng khác, dừng dịch vụ gây xung đột (sau khi xác nhận rõ ràng), hoặc hủy. Nó **không bao giờ** tự kill một tiến trình lạ.
+
+### Truy cập từ xa (SSH tunnel)
+
+Router gắn vào `127.0.0.1` trên máy chủ GPU. Để truy cập từ máy của bạn, mở một SSH tunnel:
+
+```bash
+# macOS / Linux
+ssh -N -L 20128:127.0.0.1:20128 user@SERVER_IP
+
+# Windows PowerShell
+ssh -N -L 20128:127.0.0.1:20128 user@SERVER_IP
+```
+
+Sau đó trỏ trình duyệt hoặc client tới `http://127.0.0.1:20128`. Thay `SERVER_IP` bằng địa chỉ máy chủ của bạn; không bao giờ mở router lên `0.0.0.0` trừ khi bạn hiểu rõ các rủi ro bảo mật — trình cài đặt không bao giờ tự mở cổng tường lửa.
 
 ## Hỗ trợ nhiều GPU (Multi-GPU)
 

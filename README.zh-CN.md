@@ -2,7 +2,7 @@
   🇬🇧 <a href="README.md">English</a> &nbsp;|&nbsp; 🇻🇳 <a href="README.vi.md">Tiếng Việt</a> &nbsp;|&nbsp; 🇨🇳 <a href="README.zh-CN.md">中文</a>
 </p>
 
-<!-- SOURCE-REVISION: 4076626307 -->
+<!-- SOURCE-REVISION: 3288716221 -->
 
 ---
 
@@ -305,6 +305,81 @@ flowchart TD
 | **vLLM** | 高吞吐模型服务和 OpenAI 兼容 API | `ai-start vllm Qwen/Qwen2.5-7B-Instruct` |
 
 **llama.cpp 是本项目的主要运行时。** Ollama 和 vLLM 是可选的替代方案。即使可选运行时不可用，可用的 llama.cpp 安装仍然是重要的基线。
+
+## 语言选择
+
+安装器的**第一步**（在任何安装输出之前）会询问你的首选语言：
+
+```
+Select your language / Chọn ngôn ngữ / 选择语言
+  1) English
+  2) Tiếng Việt
+  3) 中文
+```
+
+支持的语言：`en`（English）、`vi`（Tiếng Việt）、`zh-CN`（简体中文）。
+
+无人值守安装时，显式传入语言或通过环境变量设置——选择器会被跳过：
+
+```bash
+./bootstrap.sh --remote-gpu --lang zh-CN
+# 或
+GPU_KIT_LANG=zh-CN ./bootstrap.sh --remote-gpu
+# 其余语言同样可用：--lang vi / --lang en
+```
+
+```bash
+./bootstrap.sh --remote-gpu --lang vi
+```
+
+```text
+1) English
+2) Tiếng Việt
+3) 中文
+```
+
+你的选择会保存到 `~/ai/config/language.conf`，下次运行时自动复用（并附一个不打扰的"使用已保存语言？[Y/n]"询问）。显式的 `--lang` 始终优先。新增安装语言只需新建 `config/i18n/<code>.env` 目录并在 `config/i18n/languages.conf` 中加一行——无需修改安装器代码。
+
+## AI 路由器（9Router + OmniRoute）
+
+安装器可选地为你配置两个 OpenAI 兼容的 AI 路由器，它们位于你的模型服务器之前：
+
+| 路由器 | 功能 | 默认端口 | 上游 |
+|---|---|---|---|
+| **9Router** | 本地仪表盘 + OpenAI 兼容 API 路由 | 20128 | [decolua/9router](https://github.com/decolua/9router) |
+| **OmniRoute** | 多提供商路由仪表盘 | 20128 | [diegosouzapw/OmniRoute](https://github.com/diegosouzapw/OmniRoute) |
+
+两者都通过 `npm install -g` 安装（9Router 需要 Node ≥ 18，OmniRoute 需要 Node ≥ 22——缺失时安装器会自动配置 Node 22），仅绑定 `127.0.0.1`，并在报告成功前通过健康检查。如果某个组件失败，总结会报告 `INSTALL FAILED` 及原因，而不是虚假的成功。
+
+### 路由器管理
+
+```bash
+ai-router status              # 9Router: RUNNING / OmniRoute: STOPPED / ...
+ai-router start 9router       # 启动单个路由器
+ai-router stop omniroute      # 停止单个路由器
+ai-router logs 9router        # 查看路由器日志
+ai-router health omniroute    # HTTP 健康探测
+```
+
+`ai-start`（菜单选项 6）和 `ai-stop` 也能管理路由器。路由器是可选的：在 `~/ai/config/defaults.env` 中设置 `ROUTER_9ROUTER_ENABLED=no` / `ROUTER_OMNIROUTE_ENABLED=no` 可禁用，设置 `ROUTER_9ROUTER_PORT` / `ROUTER_OMNIROUTE_PORT` 可更改端口。
+
+### 端口冲突
+
+如果端口 20128 已被占用，安装器会询问：自动选择其他端口、停止冲突服务（需明确确认后）、或取消。它**绝不会**自动杀死未知进程。
+
+### 远程访问（SSH 隧道）
+
+路由器绑定在 GPU 服务器的 `127.0.0.1` 上。要从你自己的电脑访问它们，请打开 SSH 隧道：
+
+```bash
+# macOS / Linux
+ssh -N -L 20128:127.0.0.1:20128 user@SERVER_IP
+
+# Windows PowerShell
+ssh -N -L 20128:127.0.0.1:20128 user@SERVER_IP
+```
+
+然后将浏览器或客户端指向 `http://127.0.0.1:20128`。把 `SERVER_IP` 替换为你的服务器地址；除非你理解相关安全影响，否则切勿将路由器暴露在 `0.0.0.0` 上——安装器绝不会自动打开防火墙端口。
 
 ## 多 GPU 支持
 
