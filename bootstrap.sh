@@ -318,14 +318,19 @@ if [[ "${PLATFORM}" != "Darwin" ]]; then
                 esac
                 i=$((i + 1))
             done < <(i18n_supported_languages)
-            echo ""
-            printf "Choice [1-%d]: " "$((i - 1))"
-            read -r lang_choice
-            if [[ "${lang_choice}" =~ ^[0-9]+$ ]] && [[ "${lang_choice}" -ge 1 ]] && [[ "${lang_choice}" -le ${#codes[@]} ]]; then
-                SELECTED_LANG="${codes[$((lang_choice - 1))]}"
-            else
-                SELECTED_LANG="en"
-            fi
+            lang_count=$((i - 1))
+            SELECTED_LANG=""
+            while [[ -z "${SELECTED_LANG}" ]]; do
+                echo ""
+                printf "Choice [1-%d]: " "${lang_count}"
+                read -r lang_choice || lang_choice=""
+                # Numeric-range check only; no dynamic variable names from input
+                if [[ "${lang_choice}" =~ ^[0-9]+$ ]] && [[ "${lang_choice}" -ge 1 ]] && [[ "${lang_choice}" -le "${lang_count}" ]] 2>/dev/null; then
+                    SELECTED_LANG="${codes[$((lang_choice - 1))]}"
+                else
+                    echo -e "${C_RED}[ERROR]${C_RESET} $(tr LANGUAGE_CHOICE_INVALID "${lang_count}")"
+                fi
+            done
             i18n_load_catalog "${SELECTED_LANG}"
             i18n_save_language "${SELECTED_LANG}" || true
             echo ""

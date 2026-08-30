@@ -34,7 +34,10 @@ export I18N_LANG
 i18n_supported_languages() {
     local conf="${I18N_DIR}/languages.conf"
     if [[ -f "${conf}" ]]; then
-        grep -vE '^[[:space:]]*(#|$)' "${conf}" 2>/dev/null | tr -d ' \r'
+        # NOTE: never pipe through `tr` here — i18n.sh defines a shell function
+        # named `tr` which shadows /usr/bin/tr, and the pipeline would recurse
+        # into the function (the original I18N_K_-d crash). Use sed instead.
+        sed 's/[[:space:]]//g' "${conf}" 2>/dev/null | grep -vE '^($|#)'
     else
         echo "en"
     fi
@@ -65,7 +68,7 @@ i18n_saved_language() {
     local conf="${AI_CONFIG_DIR:-${HOME}/ai/config}/language.conf"
     if [[ -f "${conf}" ]]; then
         local saved
-        saved="$(head -1 "${conf}" 2>/dev/null | tr -d ' \r' || true)"
+        saved="$(head -1 "${conf}" 2>/dev/null | sed 's/[[:space:]]//g' || true)"
         echo "${saved}"
     fi
 }
@@ -123,6 +126,14 @@ i18n_init() {
 tr() {
     local key="$1"
     shift
+    # Seguridad: la clave debe ser un identificador Bash valido. Si el caller
+    # pasa datos de usuario (p.ej. "-d", "4", "abc") como key, NO se construye
+    # un nombre de variable invalido como I18N_K_-d (causaba el crash
+    # "invalid variable name" en el selector de idioma).
+    if [[ ! "${key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        echo "${key}"
+        return 0
+    fi
     local var="I18N_K_${key}"
     local value="${!var:-}"
     if [[ -z "${value}" ]]; then
