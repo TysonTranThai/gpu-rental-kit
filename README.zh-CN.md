@@ -322,20 +322,9 @@ Select your language / Chọn ngôn ngữ / 选择语言
 无人值守安装时，显式传入语言或通过环境变量设置——选择器会被跳过：
 
 ```bash
-./bootstrap.sh --remote-gpu --lang zh-CN
+./bootstrap.sh --remote-gpu --lang vi
 # 或
 GPU_KIT_LANG=zh-CN ./bootstrap.sh --remote-gpu
-# 其余语言同样可用：--lang vi / --lang en
-```
-
-```bash
-./bootstrap.sh --remote-gpu --lang vi
-```
-
-```text
-1) English
-2) Tiếng Việt
-3) 中文
 ```
 
 你的选择会保存到 `~/ai/config/language.conf`，下次运行时自动复用（并附一个不打扰的"使用已保存语言？[Y/n]"询问）。显式的 `--lang` 始终优先。新增安装语言只需新建 `config/i18n/<code>.env` 目录并在 `config/i18n/languages.conf` 中加一行——无需修改安装器代码。
