@@ -20,8 +20,11 @@ install_base_packages() {
 
     # Resolve privileges via the shared helper (root -> SUDO="", no sudo call).
     # Non-root without sudo is a clear failure: base packages are essential.
+    # Pure-bash path resolution (no external dirname — safe in isolated PATHs).
     # shellcheck source=privileges.sh
-    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/privileges.sh"
+    _GPU_KIT_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"; [[ "${_GPU_KIT_SCRIPT_DIR}" == "${BASH_SOURCE[0]}" ]] && _GPU_KIT_SCRIPT_DIR="."
+    source "${_GPU_KIT_SCRIPT_DIR}/privileges.sh"
+    unset _GPU_KIT_SCRIPT_DIR
     require_privileges || return 1
 
     if command -v apt-get &>/dev/null; then

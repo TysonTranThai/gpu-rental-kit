@@ -9,9 +9,13 @@ fi
 
 C_RESET='\033[0m'; C_BOLD='\033[1m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'; C_RED='\033[0;31m'
 
-# Shared privilege abstraction — root containers run without sudo
+# Shared privilege abstraction — root containers run without sudo.
+# Pure-bash path resolution: works even when external utilities (dirname) are
+# absent from PATH (e.g. fully isolated test/mock environments).
 # shellcheck source=privileges.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/privileges.sh"
+_GPU_KIT_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"; [[ "${_GPU_KIT_SCRIPT_DIR}" == "${BASH_SOURCE[0]}" ]] && _GPU_KIT_SCRIPT_DIR="."
+source "${_GPU_KIT_SCRIPT_DIR}/privileges.sh"
+unset _GPU_KIT_SCRIPT_DIR
 
 OLLAMA_INSTALLED="no"
 OLLAMA_STATUS="NOT INSTALLED"

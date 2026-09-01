@@ -258,6 +258,10 @@ for arg in "$@"; do
         -y|--yes|--auto) AUTO_CONFIRM="yes" ;;
         --interactive) AUTO_CONFIRM="no" ;;
         --lang) LANG_NEXT="pending" ;;
+        --configure)
+            # Rerun the guided setup wizard (change runtime/model/gateway/port
+            # without reinstalling). Delegates to setup.sh --wizard.
+            WIZARD_FLAG="yes" ;;
         *)
             if [[ "${LANG_NEXT:-}" == "pending" ]]; then
                 SELECTED_LANG="${arg}"
@@ -277,6 +281,10 @@ PLATFORM="$(uname -s)"
 if [[ "${PLATFORM}" != "Darwin" ]]; then
     # shellcheck source=scripts/i18n.sh
     source "${SCRIPT_DIR}/scripts/i18n.sh"
+    # Export the language so setup.sh (and every sourced module) initializes
+    # i18n from the SAME selection before printing anything. Without this the
+    # installer printed its first ~15 stages in English after a Vietnamese pick.
+    export GPU_KIT_LANG_ACTIVE="en"
     if [[ -n "${SELECTED_LANG}" ]]; then
         # Explicit --lang: validate, no selector shown
         if ! i18n_is_supported "${SELECTED_LANG}"; then
@@ -306,16 +314,28 @@ if [[ "${PLATFORM}" != "Darwin" ]]; then
         if [[ "${I18N_LANG}" == "en" && "${local_saved}" != "en" ]]; then
             echo -e "${C_BOLD}$(tr SELECT_LANGUAGE_PROMPT)${C_RESET}"
             echo ""
+            # Emoji flags only when the terminal can render them; ASCII tags are
+            # the graceful fallback (never break the installer on rendering).
+            use_emoji=0
+            i18n_terminal_supports_emoji && use_emoji=1
             i=1
             codes=()
             while IFS= read -r code; do
                 codes+=("${code}")
+                flag=""
+                label=""
+                tag=""
                 case "${code}" in
-                    en)    echo "  ${i}) \U0001F1EC\U0001F1E7 English" ;;
-                    vi)    echo "  ${i}) \U0001F1FB\U0001F1F3 Ti\u1ebfng Vi\u1ec7t" ;;
-                    zh-CN) echo "  ${i}) \U0001F1E8\U0001F1F3 中文" ;;
-                    *)     echo "  ${i}) ${code}" ;;
+                    en)    flag="🇬🇧"; label="English";    tag="EN" ;;
+                    vi)    flag="🇻🇳"; label="Tiếng Việt"; tag="VI" ;;
+                    zh-CN) flag="🇨🇳"; label="中文";        tag="ZH" ;;
+                    *)     flag="";  label="${code}";     tag="${code}" ;;
                 esac
+                if [[ -n "${flag}" ]] && [[ "${use_emoji}" == "1" ]]; then
+                    echo "  ${i}) ${flag} ${label}"
+                else
+                    echo "  ${i}) [${tag}] ${label}"
+                fi
                 i=$((i + 1))
             done < <(i18n_supported_languages)
             lang_count=$((i - 1))
@@ -381,10 +401,12 @@ else
     SETUP_ARGS=()
     [[ "${AUTO_CONFIRM}" == "yes" ]] && SETUP_ARGS+=(-y)
 fi
+[[ "${WIZARD_FLAG:-}" == "yes" ]] && SETUP_ARGS+=(--wizard)
 SETUP_ARGS+=("${EXTRA_ARGS[@]}")
 
-export AUTO_CONFIRM
-export GPU_KIT_LANG_ACTIVE="${I18N_LANG:-en}"
+GPU_KIT_LANG_ACTIVE="${I18N_LANG}"
+export GPU_KIT_LANG_ACTIVE
+export GPU_KIT_LANG="${I18N_LANG}"
 echo -e "${C_BOLD}$(tr INSTALLER_TITLE 2>/dev/null || echo "Running setup...") — $(tr STAGE_PRIVILEGES 2>/dev/null || echo "setup")...${C_RESET}"
 echo ""
 bash "${SCRIPT_DIR}/setup.sh" "${SETUP_ARGS[@]}"

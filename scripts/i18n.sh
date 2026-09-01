@@ -50,6 +50,30 @@ i18n_lang() {
 }
 
 # -----------------------------------------------------------------------------
+# i18n_terminal_supports_emoji — 0 when flag emoji are likely to render
+#
+# Heuristic (never fails the installer — fallback is ASCII tags):
+#   1. Explicit override: GPU_KIT_EMOJI=1 forces on, GPU_KIT_EMOJI=0 forces off.
+#   2. TERM=dumb / unset, or NO_COLOR set → off.
+#   3. CI environments (CI/TF_BUILD/AGENT_NAME set) → off.
+#   4. Non-interactive stdout (not a TTY) → off (piped output mangles emoji).
+#   5. Otherwise assume a modern UTF-8 terminal → on.
+# -----------------------------------------------------------------------------
+i18n_terminal_supports_emoji() {
+    case "${GPU_KIT_EMOJI:-}" in
+        1|true|yes) return 0 ;;
+        0|false|no) return 1 ;;
+    esac
+    [[ -n "${NO_COLOR:-}" ]] && return 1
+    case "${TERM:-}" in
+        ""|dumb) return 1 ;;
+    esac
+    [[ -n "${CI:-}" || -n "${TF_BUILD:-}" || -n "${AGENT_NAME:-}" ]] && return 1
+    [[ -t 1 ]] || return 1
+    return 0
+}
+
+# -----------------------------------------------------------------------------
 # i18n_is_supported LANG — 0 if supported
 # -----------------------------------------------------------------------------
 i18n_is_supported() {

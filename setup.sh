@@ -19,18 +19,21 @@ export _GPU_RENTAL_KIT_LOADED="1"
 #   --interactive      force prompts even in remote mode
 AUTO_CONFIRM="no"
 REMOTE_MODE="no"
+WIZARD_MODE="no"
 for arg in "$@"; do
     case "${arg}" in
         -y|--yes|--auto) AUTO_CONFIRM="yes" ;;
         --remote-gpu)    REMOTE_MODE="yes" ;;
         --interactive)   AUTO_CONFIRM="no" ;;
+        --wizard)        WIZARD_MODE="yes" ;;
         -h|--help)
-            echo "Usage: setup.sh [-y|--yes] [--remote-gpu] [--interactive]"
+            echo "Usage: setup.sh [-y|--yes] [--remote-gpu] [--interactive] [--wizard]"
             echo ""
             echo "  -y, --yes       Auto-confirm all prompts"
             echo "  --remote-gpu    Remote GPU mode: requires Linux + NVIDIA GPU"
             echo "                  (implies -y unless --interactive is passed)"
             echo "  --interactive   Force prompts (overrides --remote-gpu auto-confirm)"
+            echo "  --wizard        Guided setup wizard (choose runtime, model, gateway)"
             exit 0
             ;;
     esac
@@ -97,6 +100,16 @@ log_error() { log "ERROR" "$@"; }
 log_ok() { log "OK" "$@"; }
 
 # =============================================================================
+# i18n — initialize BEFORE any user-facing output so the selected language
+# (GPU_KIT_LANG exported by bootstrap.sh) controls the ENTIRE installer.
+# tr() is available to every module sourced below.
+# =============================================================================
+# shellcheck source=scripts/i18n.sh
+source "${SCRIPT_DIR}/scripts/i18n.sh"
+i18n_init
+export I18N_LANG
+
+# =============================================================================
 # Error handler
 # =============================================================================
 on_error() {
@@ -105,7 +118,7 @@ on_error() {
     log_error "Check the log: ${LOG_FILE}"
     echo ""
     echo -e "${C_RED}══════════════════════════════════════════════════════════${C_RESET}"
-    echo -e "${C_RED}  SETUP FAILED — see ${LOG_FILE}${C_RESET}"
+    echo -e "${C_RED}  $(tr ERR_SETUP_FAILED) — ${LOG_FILE}${C_RESET}"
     echo -e "${C_RED}══════════════════════════════════════════════════════════${C_RESET}"
     exit "${exit_code}"
 }
@@ -189,7 +202,7 @@ REPORT_EOF
 # =============================================================================
 echo -e "${C_BOLD}${C_BLUE}"
 echo "══════════════════════════════════════════════════════════════"
-echo "  GPU RENTAL KIT — Automated Environment Setup"
+echo "  $(tr INSTALLER_TITLE) — $(tr INSTALLER_SUBTITLE)"
 echo "══════════════════════════════════════════════════════════════"
 echo -e "${C_RESET}"
 echo ""
@@ -200,7 +213,18 @@ echo ""
 # =============================================================================
 # Step 1: Check privileges (shared abstraction: scripts/privileges.sh)
 # =============================================================================
-echo -e "${C_BOLD}[1/15] Checking privileges...${C_RESET}"
+# =============================================================================
+# Guided wizard mode — replaces the fixed 15-stage flow with an interactive
+# flow: detect → runtime → model → GPU → gateway → port/access → summary.
+# =============================================================================
+if [[ "${WIZARD_MODE}" == "yes" ]]; then
+    # shellcheck source=scripts/wizard.sh
+    source "${SCRIPT_DIR}/scripts/wizard.sh"
+    run_wizard
+    exit 0
+fi
+
+echo -e "${C_BOLD}[1/15] $(tr STAGE_PRIVILEGES)...${C_RESET}"
 # shellcheck source=scripts/privileges.sh
 source "${SCRIPT_DIR}/scripts/privileges.sh"
 if [[ "${EUID}" -eq 0 ]]; then
@@ -218,7 +242,7 @@ elif command -v sudo &>/dev/null; then
     export SUDO
     sudo -v
 else
-    echo -e "${C_RED}[ERROR]${C_RESET} No sudo available and not running as root."
+    echo -e "${C_RED}[ERROR]${C_RESET} $(tr ERR_NO_PRIV)"
     echo -e "  Privileged steps (package install, Docker config) cannot run."
     echo -e "  Fix: rerun as root (rented GPU containers usually run as root),"
     echo -e "       or install sudo: apt-get install -y sudo"
@@ -229,7 +253,7 @@ log_info "Privilege check complete (SUDO='${SUDO}')."
 # =============================================================================
 # Step 2: Detect OS
 # =============================================================================
-echo -e "${C_BOLD}[2/15] Detecting OS...${C_RESET}"
+echo -e "${C_BOLD}[2/15] $(tr STAGE_OS)...${C_RESET}"
 # shellcheck source=scripts/detect_environment.sh
 source "${SCRIPT_DIR}/scripts/detect_environment.sh"
 detect_os
@@ -243,14 +267,14 @@ fi
 # =============================================================================
 # Step 3: Detect Docker container
 # =============================================================================
-echo -e "${C_BOLD}[3/15] Checking container/virtualization...${C_RESET}"
+echo -e "${C_BOLD}[3/15] $(tr STAGE_CONTAINER)...${C_RESET}"
 detect_virtualization
 log_info "Container environment: ${IS_DOCKER}, VM: ${IS_VM}, WSL: ${IS_WSL}"
 
 # =============================================================================
 # Step 4: Detect GPU
 # =============================================================================
-echo -e "${C_BOLD}[4/15] Detecting GPU...${C_RESET}"
+echo -e "${C_BOLD}[4/15] $(tr STAGE_GPU)...${C_RESET}"
 # shellcheck source=scripts/detect_gpu.sh
 source "${SCRIPT_DIR}/scripts/detect_gpu.sh"
 run_gpu_detection
@@ -258,7 +282,7 @@ log_info "GPU: ${GPU_NAME} (${GPU_VRAM_GB}GB, ${GPU_PROFILE} profile)"
 
 if [[ "${HAS_NVIDIA_GPU}" != "yes" ]]; then
     echo ""
-    echo -e "${C_RED}[ERROR]${C_RESET} No NVIDIA GPU detected."
+    echo -e "${C_RED}[ERROR]${C_RESET} $(tr ERR_NO_NVIDIA_GPU)"
     echo -e "  This toolkit is designed for NVIDIA GPU machines."
     echo -e "  If you expected a GPU, check with your provider."
     echo ""
@@ -277,9 +301,9 @@ fi
 # =============================================================================
 # Step 5: Detect NVIDIA driver
 # =============================================================================
-echo -e "${C_BOLD}[5/15] Checking NVIDIA driver...${C_RESET}"
+echo -e "${C_BOLD}[5/15] $(tr STAGE_DRIVER)...${C_RESET}"
 if [[ "${HAS_NVIDIA_GPU}" == "yes" ]] && [[ "${NVIDIA_DRIVER_OK}" != "yes" ]]; then
-    echo -e "${C_RED}[ERROR]${C_RESET} NVIDIA GPU detected but driver not working."
+    echo -e "${C_RED}[ERROR]${C_RESET} $(tr ERR_DRIVER_NOT_WORKING)"
     echo -e "  Install the driver as root: apt install -y nvidia-driver-550 (or via sudo if available)"
     echo -e "  Then reboot and re-run ./bootstrap.sh"
     echo ""
@@ -302,14 +326,14 @@ log_info "Driver: ${NVIDIA_DRIVER_VERSION:-not detected}"
 # =============================================================================
 # Step 6: Detect CUDA compatibility
 # =============================================================================
-echo -e "${C_BOLD}[6/15] Checking CUDA compatibility...${C_RESET}"
+echo -e "${C_BOLD}[6/15] $(tr STAGE_CUDA)...${C_RESET}"
 detect_cuda_compat
 log_info "CUDA driver: ${CUDA_DRIVER_VERSION}, max supported: ${CUDA_MAX_SUPPORTED}"
 
 # =============================================================================
 # Step 7: Detect CPU/RAM/disk/network
 # =============================================================================
-echo -e "${C_BOLD}[7/15] Detecting system resources...${C_RESET}"
+echo -e "${C_BOLD}[7/15] $(tr STAGE_RESOURCES)...${C_RESET}"
 detect_cpu
 detect_ram
 detect_disk
@@ -317,15 +341,14 @@ detect_internet
 log_info "CPU: ${CPU_MODEL:0:40} (${CPU_CORES} cores), RAM: ${RAM_TOTAL_GB}GB, Disk: ${DISK_AVAILABLE_GB}GB free"
 
 if [[ "${INTERNET_AVAILABLE}" != "yes" ]]; then
-    echo -e "${C_RED}[ERROR]${C_RESET} No internet connectivity detected."
-    echo -e "  This toolkit requires internet access to install packages."
+    echo -e "${C_RED}[ERROR]${C_RESET} $(tr ERR_NO_INTERNET)"
     exit 1
 fi
 
 # =============================================================================
 # Step 8: Detect Docker
 # =============================================================================
-echo -e "${C_BOLD}[8/15] Checking Docker...${C_RESET}"
+echo -e "${C_BOLD}[8/15] $(tr STAGE_DOCKER)...${C_RESET}"
 # shellcheck source=scripts/setup_docker.sh
 source "${SCRIPT_DIR}/scripts/setup_docker.sh"
 detect_docker
@@ -341,7 +364,7 @@ log_info "Container environment: ${IS_DOCKER}"
 # =============================================================================
 # Step 9: Detect persistent storage
 # =============================================================================
-echo -e "${C_BOLD}[9/15] Detecting persistent storage...${C_RESET}"
+echo -e "${C_BOLD}[9/15] $(tr STAGE_STORAGE)...${C_RESET}"
 # shellcheck source=scripts/setup_storage.sh
 source "${SCRIPT_DIR}/scripts/setup_storage.sh"
 detect_storage
@@ -352,7 +375,7 @@ log_info "Storage classification: ${STORAGE_CLASSIFICATION}"
 # =============================================================================
 echo ""
 echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
-echo -e "${C_BOLD}  ENVIRONMENT SUMMARY${C_RESET}"
+echo -e "${C_BOLD}  $(tr SUMMARY_ENV_TITLE)${C_RESET}"
 echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
 print_environment_summary
 print_gpu_summary
@@ -362,28 +385,28 @@ echo ""
 # Step 10: Confirmation before destructive actions
 # =============================================================================
 echo -e "${C_YELLOW}${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
-echo -e "${C_YELLOW}${C_BOLD}  ABOUT TO INSTALL${C_RESET}"
+echo -e "${C_YELLOW}${C_BOLD}  $(tr STAGE_CONFIRM)${C_RESET}"
 echo -e "${C_YELLOW}${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
 echo ""
-echo "  The following will be installed/configured:"
-echo "    - Base system utilities (curl, git, build-essential, etc.)"
-echo "    - Python virtual environment at ${AI_VENV_DIR}"
-echo "    - PyTorch (GPU-aware)"
-echo "    - AI packages (transformers, accelerate, etc.)"
-echo "    - Ollama (if not present)"
-echo "    - vLLM and llama.cpp (if GPU supports)"
-echo "    - Docker + NVIDIA container toolkit (if safe)"
+echo "  $(tr CONFIRM_INSTALL_LIST)"
+echo "    - $(tr CONFIRM_ITEM_BASE_UTILS)"
+echo "    - $(tr CONFIRM_ITEM_PYTHON) ${AI_VENV_DIR}"
+echo "    - $(tr CONFIRM_ITEM_PYTORCH)"
+echo "    - $(tr CONFIRM_ITEM_AI_PACKAGES)"
+echo "    - $(tr CONFIRM_ITEM_OLLAMA)"
+echo "    - $(tr CONFIRM_ITEM_VLLM_LLAMACPP)"
+echo "    - $(tr CONFIRM_ITEM_DOCKER)"
 echo ""
-echo -e "  ${C_YELLOW}This may take 10-30 minutes depending on network speed.${C_RESET}"
+echo -e "  ${C_YELLOW}$(tr CONFIRM_INSTALL_TIME)${C_RESET}"
 echo ""
 
 if [[ "${AUTO_CONFIRM:-no}" == "yes" ]]; then
-    echo -e "${C_GREEN}[AUTO]${C_RESET} Proceeding automatically (AUTO_CONFIRM=yes)."
+    echo -e "${C_GREEN}[AUTO]${C_RESET} $(tr AUTO_PROCEED)"
 else
-    read -rp "  Proceed with installation? [y/N] " -n 1 -r
+    read -rp "  $(tr CONFIRM_PROCEED) " -n 1 -r
     echo
     if [[ ! "${REPLY}" =~ ^[Yy]$ ]]; then
-        echo "Aborting. No changes were made."
+        echo "$(tr CONFIRM_ABORT)"
         exit 0
     fi
 fi
@@ -392,7 +415,7 @@ fi
 # Step 11: Install base utilities
 # =============================================================================
 echo ""
-echo -e "${C_BOLD}[11/15] Installing base utilities...${C_RESET}"
+echo -e "${C_BOLD}[11/15] $(tr STAGE_BASE_UTILS)...${C_RESET}"
 # shellcheck source=scripts/setup_system.sh
 source "${SCRIPT_DIR}/scripts/setup_system.sh"
 install_base_packages
@@ -400,20 +423,20 @@ install_base_packages
 # =============================================================================
 # Step 12: Create AI directory structure
 # =============================================================================
-echo -e "${C_BOLD}[12/15] Creating AI directory structure...${C_RESET}"
+echo -e "${C_BOLD}[12/15] $(tr STAGE_DIRS)...${C_RESET}"
 create_ai_directories
 
 # =============================================================================
 # Step 13: Configure storage (models/cache location)
 # =============================================================================
-echo -e "${C_BOLD}[13/15] Configuring model/cache storage...${C_RESET}"
+echo -e "${C_BOLD}[13/15] $(tr STAGE_STORAGE_CFG)...${C_RESET}"
 ALLOW_STORAGE_PROMPT="${ALLOW_STORAGE_PROMPT:-no}"
 configure_model_storage
 
 # =============================================================================
 # Step 14: Configure Python environment
 # =============================================================================
-echo -e "${C_BOLD}[14/15] Configuring Python environment...${C_RESET}"
+echo -e "${C_BOLD}[14/15] $(tr STAGE_PYTHON)...${C_RESET}"
 # shellcheck source=scripts/setup_python.sh
 source "${SCRIPT_DIR}/scripts/setup_python.sh"
 run_python_setup
@@ -421,7 +444,7 @@ run_python_setup
 # =============================================================================
 # Step 15: Configure runtimes (Ollama, vLLM, llama.cpp, HF, Docker)
 # =============================================================================
-echo -e "${C_BOLD}[15/15] Configuring AI runtimes...${C_RESET}"
+echo -e "${C_BOLD}[15/15] $(tr STAGE_RUNTIMES)...${C_RESET}"
 
 # Hugging Face
 # shellcheck source=scripts/setup_huggingface.sh

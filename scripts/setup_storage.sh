@@ -104,16 +104,21 @@ classify_persistence() {
         STORAGE_CONFIDENCE="high"   # high confidence that local storage is NOT durable
     fi
 
-    # Build advisory
-    STORAGE_ADVISORY="PERSISTENCE UNKNOWN — DO NOT RELY ON LOCAL STORAGE."
+    # Build advisory (localize when i18n is loaded; English fallback keeps
+    # the standalone/test path byte-identical)
+    local hard_warning="PERSISTENCE UNKNOWN — DO NOT RELY ON LOCAL STORAGE."
+    if command -v tr >/dev/null 2>&1; then
+        hard_warning="$(tr STORAGE_WARN_PERSISTENCE_UNKNOWN 2>/dev/null || echo "${hard_warning}")"
+    fi
+    STORAGE_ADVISORY="${hard_warning}"
     if [[ "${STORAGE_CLASSIFICATION}" == "TEMPORARY" ]]; then
-        STORAGE_ADVISORY="Local storage is TEMPORARY. It survives: restart=${STORAGE_SURVIVES_RESTART}, deletion=${STORAGE_SURVIVES_DELETE}, rental end=${STORAGE_SURVIVES_RENTAL_END}. Back up before the rental ends."
+        STORAGE_ADVISORY="$(tr STORAGE_WARN_TEMPORARY "${STORAGE_SURVIVES_RESTART}" "${STORAGE_SURVIVES_DELETE}" "${STORAGE_SURVIVES_RENTAL_END}" 2>/dev/null || echo "Local storage is TEMPORARY. It survives: restart=${STORAGE_SURVIVES_RESTART}, deletion=${STORAGE_SURVIVES_DELETE}, rental end=${STORAGE_SURVIVES_RENTAL_END}. Back up before the rental ends.")"
         if [[ "${STORAGE_STATE}" == "unknown" ]]; then
             # Provider environment could not be verified → keep the hard warning.
-            STORAGE_ADVISORY="${STORAGE_ADVISORY} PERSISTENCE UNKNOWN — DO NOT RELY ON LOCAL STORAGE."
+            STORAGE_ADVISORY="${STORAGE_ADVISORY} ${hard_warning}"
         fi
     elif [[ "${STORAGE_CONFIDENCE}" == "low" ]]; then
-        STORAGE_ADVISORY="Potential persistent mounts found, but durability could NOT be verified with the provider. PERSISTENCE UNKNOWN — DO NOT RELY ON LOCAL STORAGE."
+        STORAGE_ADVISORY="$(tr STORAGE_WARN_UNVERIFIED 2>/dev/null || echo "Potential persistent mounts found, but durability could NOT be verified with the provider.") ${hard_warning}"
     fi
 
     export STORAGE_CLASSIFICATION STORAGE_CONFIDENCE STORAGE_STATE
