@@ -218,6 +218,17 @@ echo ""
 # flow: detect → runtime → model → GPU → gateway → port/access → summary.
 # =============================================================================
 if [[ "${WIZARD_MODE}" == "yes" ]]; then
+    # Privileges MUST be resolved before the wizard runs: runtime/gateway
+    # installers (setup_ollama.sh etc.) use ${SUDO} and require_privileges.
+    # Without this, ${SUDO} is unbound under set -u and the wizard crashes
+    # the moment a runtime needs a package installed.
+    # shellcheck source=scripts/privileges.sh
+    source "${SCRIPT_DIR}/scripts/privileges.sh"
+    if ! require_privileges; then
+        echo -e "${C_RED}[ERROR]${C_RESET} $(tr ERR_NO_PRIV)"
+        exit 1
+    fi
+    log_info "Privilege check complete (SUDO='${SUDO}')."
     # shellcheck source=scripts/wizard.sh
     source "${SCRIPT_DIR}/scripts/wizard.sh"
     run_wizard

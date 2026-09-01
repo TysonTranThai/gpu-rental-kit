@@ -107,9 +107,13 @@ wizard_pick_port() {
 wizard_env_summary() {
     wizard_header "$(tr WIZARD_ENV_TITLE)"
 
-    # GPU detection (module sets GPU_* globals)
+    # GPU detection (module sets GPU_* globals) + multi-GPU selection helpers
+    # (mg_max_single_vram_mb / mg_auto_select live in gpu_select.sh and are
+    # used by the model menu & GPU config steps below).
     source "${_GPU_KIT_SCRIPT_DIR}/detect_gpu.sh"
     run_gpu_detection
+    # shellcheck source=gpu_select.sh
+    source "${_GPU_KIT_SCRIPT_DIR}/gpu_select.sh"
 
     if [[ "${HAS_NVIDIA_GPU}" == "yes" ]]; then
         echo "  ✓ $(tr WIZARD_ENV_NVIDIA_DRIVER) (${NVIDIA_DRIVER_VERSION})"
