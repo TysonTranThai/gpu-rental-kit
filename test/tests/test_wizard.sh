@@ -88,6 +88,55 @@ assert_contains "$(cat "${WIZARD}")" "run_vllm_setup" "vllm reuse"
 assert_contains "$(cat "${WIZARD}")" "run_llamacpp_setup" "llamacpp reuse"
 assert_contains "$(cat "${WIZARD}")" "model-download" "model-download reuse"
 
+# ── 8. stack.env consumption: ai-start --stack turns the wizard's choices
+#    into a launchable stack (write-only file would be a dead end) ──
+AI_START="${KIT_ROOT}/bin/ai-start"
+assert_contains "$(cat "${AI_START}")" "--stack" "ai-start accepts --stack"
+assert_contains "$(cat "${AI_START}")" "start_stack" "ai-start implements start_stack"
+assert_contains "$(cat "${AI_START}")" 'ai-router" start "${gateway_cmd}"' "stack launch starts the chosen gateway"
+
+STACK_AI="$(mktemp -d)"
+mkdir -p "${STACK_AI}/config"
+RUN_STACK() { AI_HOME="${STACK_AI}/ai" bash "${AI_START}" "$@" 2>&1; }
+
+# no stack.env → honest error, exit 1
+nostack_code=0
+RUN_STACK --stack >/dev/null 2>&1 || nostack_code=$?
+assert_eq "1" "${nostack_code}" "--stack without stack.env fails honestly"
+
+# ollama stack with gateway → dry-run shows both launch lines, exit 0
+mkdir -p "${STACK_AI}/ai/config"
+printf 'RUNTIME=ollama\nMODEL=llama3.1:8b\nGATEWAY=9router\nPORT=20128\nBIND_ADDRESS=127.0.0.1\n' > "${STACK_AI}/ai/config/stack.env"
+dry_code=0
+dry_out="$(RUN_STACK --stack dry-run)" || dry_code=$?
+assert_eq "0" "${dry_code}" "--stack dry-run exits 0 on valid ollama stack"
+assert_contains "${dry_out}" "ai-start ollama llama3.1:8b" "dry-run resolves runtime+model"
+assert_contains "${dry_out}" "ai-router start 9router" "dry-run includes gateway start"
+
+# llamacpp/vllm without MODEL → honest failure
+printf 'RUNTIME=vllm\n' > "${STACK_AI}/ai/config/stack.env"
+nomodel_code=0
+RUN_STACK --stack dry-run >/dev/null 2>&1 || nomodel_code=$?
+assert_eq "1" "${nomodel_code}" "vllm stack without MODEL fails honestly"
+
+# unknown runtime → honest failure
+printf 'RUNTIME=banana\n' > "${STACK_AI}/ai/config/stack.env"
+banana_code=0
+RUN_STACK --stack dry-run >/dev/null 2>&1 || banana_code=$?
+assert_eq "1" "${banana_code}" "unknown RUNTIME fails honestly"
+
+# ai-start stack (no --) shows the saved config
+printf 'RUNTIME=ollama\nMODEL=llama3.1:8b\n' > "${STACK_AI}/ai/config/stack.env"
+show_out="$(RUN_STACK stack)"
+assert_contains "${show_out}" "RUNTIME        ollama" "ai-start stack renders saved config"
+
+# ai-info surfaces the saved stack
+info_out="$(AI_HOME="${STACK_AI}/ai" bash "${KIT_ROOT}/bin/ai-info" 2>&1 || true)"
+assert_contains "${info_out}" "ai-start --stack" "ai-info points at --stack launcher"
+assert_contains "${info_out}" "RUNTIME=ollama" "ai-info shows saved RUNTIME"
+
+rm -rf "${STACK_AI}"
+
 rm -rf "${TMP_AI}" "${fn_src}"
 
 [[ ${FAIL_COUNT} -eq 0 ]] && exit 0 || exit 1

@@ -31,6 +31,7 @@ PS_FILES=(
     "bin/ai-start.ps1"
     "bin/ai-stop.ps1"
     "bin/ai-info.ps1"
+    "bin/ai-doctor.ps1"
     "bin/ai-backup.ps1"
     "bin/api-status.ps1"
 )

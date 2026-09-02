@@ -2,7 +2,7 @@
   🇬🇧 <a href="README.md">English</a> &nbsp;|&nbsp; 🇻🇳 <a href="README.vi.md">Tiếng Việt</a> &nbsp;|&nbsp; 🇨🇳 <a href="README.zh-CN.md">中文</a>
 </p>
 
-<!-- SOURCE-REVISION: 3288716221 -->
+<!-- SOURCE-REVISION: 3292620100 -->
 
 ---
 
@@ -587,6 +587,13 @@ ssh -N -L 8000:127.0.0.1:8000 user@SERVER_IP
 
 Dịch vụ từ xa vẫn riêng tư, và ứng dụng cục bộ của bạn kết nối tới `localhost`.
 
+Kiểm tra tunnel từ terminal thứ hai — `api-status` chạy trên macOS và Linux (người dùng Windows: `bin\api-status.ps1`):
+
+```bash
+api-status             # kiểm tra llama.cpp (8080) và vLLM (8000)
+api-status --port 8080 # một port cục bộ cụ thể
+```
+
 ### B. IP công khai và port — nâng cao
 
 Bạn có thể chủ động ràng buộc dịch vụ vào `0.0.0.0` và mở port trên firewall của nhà cung cấp, nhưng không khuyến nghị cho lần thiết lập đầu. Cấu hình xác thực nơi được hỗ trợ và giới hạn IP nguồn. Không phơi port thô 11434 của Ollama ra internet công khai nếu chưa có thiết kế mạng bảo mật cẩn thận.
@@ -653,12 +660,13 @@ Trước khi kết thúc hợp đồng thuê:
 | `model-download` | Tải một bí danh đã đăng ký, model Hugging Face hoặc model Ollama |
 | `model-run` | Chạy model bằng Ollama, vLLM hoặc llama.cpp (`--gpu N`, `--gpus all\|0,1\|auto`, `--gpu-mode shard\|workload`, `--size-gb N`, `--fit`) |
 | `model-stop` | Dừng một tiến trình model đang chạy |
-| `ai-start` | Khởi động Ollama, vLLM hoặc llama.cpp; các cờ GPU (`--gpus 0,1`, `--gpu 0`, ...) được chuyển tới model-run |
+| `ai-start` | Khởi động Ollama, vLLM hoặc llama.cpp; các cờ GPU (`--gpus 0,1`, `--gpu 0`, ...) được chuyển tới model-run; `--stack` khởi động runtime + gateway đã lưu từ wizard hướng dẫn (`./bootstrap.sh --configure`) |
 | `ai-stop` | Dừng runtime AI đang hoạt động |
 | `ai-info` | Hiển thị thông tin môi trường AI |
+| `ai-doctor` | Kiểm tra sức khỏe toàn bộ hệ thống (disk, GPU, venv/torch, runtime, port, API, router, log, persistence) |
 | `ai-backup` | Sao lưu cấu hình; `--include-models` bao gồm cả file model |
 
-Bản Windows nằm trong `bin\*.ps1` và dùng CÙNG TÊN (`gpu-status.ps1`, `gpu-test.ps1`, `model-list.ps1`, `model-download.ps1`, `model-run.ps1`, `model-stop.ps1`, `ai-start.ps1`, `ai-stop.ps1`, `ai-info.ps1`, `ai-backup.ps1`), cộng thêm `api-status.ps1` để kiểm tra tunnel. Chúng thực thi trên SERVER TỪ XA đã cấu hình qua SSH — xem [Hỗ trợ Windows](#hỗ-trợ-windows).
+Bản Windows nằm trong `bin\*.ps1` và dùng CÙNG TÊN (`gpu-status.ps1`, `gpu-test.ps1`, `model-list.ps1`, `model-download.ps1`, `model-run.ps1`, `model-stop.ps1`, `ai-start.ps1`, `ai-stop.ps1`, `ai-info.ps1`, `ai-doctor.ps1`, `ai-backup.ps1`), cộng thêm `api-status.ps1` để kiểm tra tunnel. Chúng thực thi trên SERVER TỪ XA đã cấu hình qua SSH — xem [Hỗ trợ Windows](#hỗ-trợ-windows).
 
 Các lệnh hữu ích khác gồm `ai-logs`, `model-logs` và `model-stop`.
 
@@ -681,6 +689,14 @@ gpu-test
 ```bash
 model-download llama3.1-8b
 ai-start ollama llama3.1:8b
+```
+
+### Tôi đã chạy wizard hướng dẫn — khởi động stack đã lưu
+
+```bash
+ai-start stack            # xem wizard đã lưu gì
+ai-start --stack dry-run  # xem trước lệnh khởi động mà không chạy
+ai-start --stack          # khởi động runtime đã lưu (và gateway nếu có)
 ```
 
 Ollama lắng nghe trên localhost port `11434` mặc định. Dùng SSH tunnel thay vì phơi port đó ra công khai.
@@ -743,6 +759,7 @@ Sao chép các file sao lưu ra ngoài máy thuê trước khi xóa máy.
 | Triệu chứng | Nguyên nhân có thể | Chẩn đoán | Bước tiếp theo |
 |---|---|---|---|
 | `sudo: command not found` khi cài đặt | Container tối giản từ nhà cung cấp thường không có sudo | `id -u`; `command -v sudo` | Đang chạy bằng root? Bộ công tự chạy các lệnh cần quyền trực tiếp — không cần sudo. Không phải root? Chạy lại bằng root, hoặc cài sudo (`apt-get install -y sudo`) |
+| Cảm giác có gì đó sai sau khi cài | Bất kỳ thứ gì từ disk đầy đến API chết | `ai-doctor` | Một lệnh chỉ đọc quét disk, GPU, venv/torch, runtime, port, API, router, log và persistence. Exit code = số mục FAIL |
 | Không phát hiện NVIDIA GPU | Sai máy/image, GPU không gắn, hoặc vấn đề từ nhà cung cấp | `nvidia-smi` | Xác nhận gói thuê có NVIDIA GPU và hỏi nhà cung cấp về passthrough |
 | CUDA không khả dụng | Driver, CUDA/PyTorch lệch phiên bản, hoặc môi trường hỏng | `nvidia-smi`; `~/ai/venv/bin/python -c 'import torch; print(torch.cuda.is_available())'` | Xem log thiết lập; không tự cài driver bất kỳ lên image của nhà cung cấp |
 | SSH từ chối kết nối | Sai IP/port, firewall, hoặc dịch vụ SSH không khả dụng | `ssh -vvv -p PORT user@SERVER_IP` | Kiểm tra thông tin kết nối của nhà cung cấp và mở đúng port SSH |
@@ -764,6 +781,13 @@ Xem log bằng:
 ai-logs
 model-logs all
 cat ~/ai/logs/setup-*.log
+```
+
+Chạy chẩn đoán toàn bộ (chỉ đọc):
+
+```bash
+ai-doctor            # kết quả dạng đọc được (PASS/WARN/FAIL/SKIP)
+ai-doctor --json     # báo cáo máy đọc được cho script/giám sát
 ```
 
 ## FAQ

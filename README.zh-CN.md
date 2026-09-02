@@ -2,7 +2,7 @@
   🇬🇧 <a href="README.md">English</a> &nbsp;|&nbsp; 🇻🇳 <a href="README.vi.md">Tiếng Việt</a> &nbsp;|&nbsp; 🇨🇳 <a href="README.zh-CN.md">中文</a>
 </p>
 
-<!-- SOURCE-REVISION: 3288716221 -->
+<!-- SOURCE-REVISION: 3292620100 -->
 
 ---
 
@@ -587,6 +587,13 @@ ssh -N -L 8000:127.0.0.1:8000 user@SERVER_IP
 
 远程服务保持私有，你的本地应用连接到 `localhost`。
 
+在第二个终端验证隧道 — `api-status` 可在 macOS 和 Linux 上使用（Windows 用户：`bin\api-status.ps1`）：
+
+```bash
+api-status             # 检查 llama.cpp (8080) 和 vLLM (8000)
+api-status --port 8080 # 指定某个本地端口
+```
+
 ### B. 公网 IP 和端口——进阶
 
 你可以刻意把服务绑定到 `0.0.0.0` 并放行服务商的防火墙端口，但不建议在首次搭建时这样做。在支持的地方配置认证，并限制来源 IP。未经仔细加固的网络设计，不要把 Ollama 的原始端口 11434 暴露到公网。
@@ -653,12 +660,13 @@ PERSISTENCE UNKNOWN — DO NOT RELY ON LOCAL STORAGE
 | `model-download` | 下载已注册别名、Hugging Face 模型或 Ollama 模型 |
 | `model-run` | 用 Ollama、vLLM 或 llama.cpp 运行模型（`--gpu N`，`--gpus all\|0,1\|auto`，`--gpu-mode shard\|workload`，`--size-gb N`，`--fit`） |
 | `model-stop` | 停止正在运行的模型进程 |
-| `ai-start` | 启动 Ollama、vLLM 或 llama.cpp；GPU 参数（`--gpus 0,1`、`--gpu 0` 等）委托给 model-run |
+| `ai-start` | 启动 Ollama、vLLM 或 llama.cpp；GPU 参数（`--gpus 0,1`、`--gpu 0` 等）委托给 model-run；`--stack` 启动引导向导（`./bootstrap.sh --configure`）保存的运行时和网关 |
 | `ai-stop` | 停止当前活动的 AI 运行时 |
 | `ai-info` | 显示 AI 环境信息 |
+| `ai-doctor` | 全栈健康检查（磁盘、GPU、venv/torch、运行时、端口、API、路由器、日志、持久化） |
 | `ai-backup` | 备份配置；`--include-models` 包含模型文件 |
 
-Windows 对应命令位于 `bin\*.ps1`，使用相同的名称（`gpu-status.ps1`、`gpu-test.ps1`、`model-list.ps1`、`model-download.ps1`、`model-run.ps1`、`model-stop.ps1`、`ai-start.ps1`、`ai-stop.ps1`、`ai-info.ps1`、`ai-backup.ps1`），另有 `api-status.ps1` 用于隧道检查。它们通过 SSH 在已配置的远程服务器上执行——见 [Windows 支持](#windows-支持)。
+Windows 对应命令位于 `bin\*.ps1`，使用相同的名称（`gpu-status.ps1`、`gpu-test.ps1`、`model-list.ps1`、`model-download.ps1`、`model-run.ps1`、`model-stop.ps1`、`ai-start.ps1`、`ai-stop.ps1`、`ai-info.ps1`、`ai-doctor.ps1`、`ai-backup.ps1`），另有 `api-status.ps1` 用于隧道检查。它们通过 SSH 在已配置的远程服务器上执行——见 [Windows 支持](#windows-支持)。
 
 其他有用的命令包括 `ai-logs`、`model-logs` 和 `model-stop`。
 
@@ -681,6 +689,14 @@ gpu-test
 ```bash
 model-download llama3.1-8b
 ai-start ollama llama3.1:8b
+```
+
+### 我运行过引导向导 — 启动已保存的配置
+
+```bash
+ai-start stack            # 查看向导保存了什么
+ai-start --stack dry-run  # 预览启动命令但不执行
+ai-start --stack          # 启动已保存的运行时（以及所选网关）
 ```
 
 Ollama 默认监听 localhost 端口 `11434`。用 SSH 隧道而不是把该端口暴露到公网。
@@ -743,6 +759,7 @@ ai-backup --list
 | 症状 | 可能原因 | 诊断 | 下一步 |
 |---|---|---|---|
 | 安装时报 `sudo: command not found` | 服务商的最小化容器通常不带 sudo | `id -u`；`command -v sudo` | 以 root 运行？工具包会直接执行特权命令——无需 sudo。非 root？请以 root 重新运行，或安装 sudo（`apt-get install -y sudo`） |
+| 安装后感觉哪里不对劲 | 从磁盘写满到 API 无响应的任何问题 | `ai-doctor` | 一条只读命令扫描磁盘、GPU、venv/torch、运行时、端口、API、路由器、日志和持久化。退出码 = 失败项数量 |
 | 未检测到 NVIDIA GPU | 机器/镜像不对、GPU 未挂载或服务商问题 | `nvidia-smi` | 确认租用包含 NVIDIA GPU，并向服务商询问直通（passthrough） |
 | CUDA 不可用 | 驱动、CUDA/PyTorch 不匹配或环境损坏 | `nvidia-smi`；`~/ai/venv/bin/python -c 'import torch; print(torch.cuda.is_available())'` | 查看搭建日志；不要随意在服务商镜像上安装驱动 |
 | SSH 连接被拒绝 | IP/端口错误、防火墙或 SSH 服务不可用 | `ssh -vvv -p PORT user@SERVER_IP` | 核对服务商连接信息并放行配置的 SSH 端口 |
@@ -764,6 +781,13 @@ ai-backup --list
 ai-logs
 model-logs all
 cat ~/ai/logs/setup-*.log
+```
+
+运行完整的只读诊断：
+
+```bash
+ai-doctor            # 人类可读的结论（PASS/WARN/FAIL/SKIP）
+ai-doctor --json     # 供脚本/监控使用的机器可读报告
 ```
 
 ## 常见问题

@@ -409,6 +409,7 @@ wizard_persist() {
     wizard_stack_set "BIND_ADDRESS" "${WIZARD_BIND}"
     [[ -n "${WIZARD_DOMAIN}" ]] && wizard_stack_set "DOMAIN" "${WIZARD_DOMAIN}"
     echo "  $(tr WIZARD_STACK_SAVED "${WIZARD_STACK_ENV}")"
+    echo "  $(tr WIZARD_STACK_LAUNCH_HINT)"
 }
 
 wizard_final_summary() {

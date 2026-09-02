@@ -30,8 +30,12 @@ result="$(HOME="${TEST_TMP}/home-b" bash -c '
 assert_eq "${TEST_TMP}/home-b/ai" "${result}" "defaults.env double-source is stable"
 
 # --- models.yaml contains expected aliases ---
+# Legacy names (llama3-8b-gguf, mistral-7b-gguf) must survive refreshes — they
+# are referenced in all three READMEs and user workflows.
+# Current-generation families (qwen3, gemma3, deepseek-r1) must be present.
 if [[ -f "${KIT_ROOT}/config/models.yaml" ]]; then
-    for alias in "qwen2-7b" "llama3-8b" "mistral-7b-gguf"; do
+    for alias in "qwen3-8b" "gemma3-4b" "deepseek-r1-8b" "llama3.3-70b" \
+                 "llama3.1-8b" "llama3-70b" "qwen3-8b-gguf" "llama3-8b-gguf" "mistral-7b-gguf"; do
         if grep -q "${alias}:" "${KIT_ROOT}/config/models.yaml" 2>/dev/null; then
             PASS_COUNT=$((PASS_COUNT + 1))
         else
@@ -39,6 +43,14 @@ if [[ -f "${KIT_ROOT}/config/models.yaml" ]]; then
             echo "  ✘ models.yaml missing alias: ${alias}"
         fi
     done
+    # no legacy TheBloke mirrors — actively maintained quantizers only
+    if grep -q "TheBloke/" "${KIT_ROOT}/config/models.yaml"; then
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        echo "  ✘ models.yaml still references unmaintained TheBloke repos"
+    else
+        PASS_COUNT=$((PASS_COUNT + 1))
+    fi
+
     # YAML-ish sanity: lines look like "key: value"
     bad_lines="$(grep -nE '^[^#[:space:]]' "${KIT_ROOT}/config/models.yaml" | grep -vE ':[[:space:]]*$|:[[:space:]].*' | grep -v '^[0-9]*: *#' || true)"
     if [[ -z "${bad_lines}" ]]; then

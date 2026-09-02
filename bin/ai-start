@@ -10,6 +10,106 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 C_RESET='\033[0m'; C_BOLD='\033[1m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'; C_CYAN='\033[0;36m'; C_RED='\033[0;31m'
 
 # =============================================================================
+# stack.env consumption — the guided wizard (setup.sh --wizard) persists the
+# user's choices to ${AI_HOME}/config/stack.env. These helpers turn that file
+# from a write-only record into a launchable stack.
+# =============================================================================
+STACK_ENV="${STACK_ENV:-${AI_HOME}/config/stack.env}"
+
+stack_get() {
+    local key="$1"
+    [[ -f "${STACK_ENV}" ]] || return 0
+    grep -E "^${key}=" "${STACK_ENV}" 2>/dev/null | head -1 | cut -d= -f2-
+}
+
+show_stack() {
+    if [[ ! -f "${STACK_ENV}" ]]; then
+        echo -e "${C_YELLOW}No saved stack found (${STACK_ENV}).${C_RESET}"
+        echo "  Run the guided setup first: ./bootstrap.sh --configure"
+        return 1
+    fi
+    echo -e "${C_BOLD}Saved stack (${STACK_ENV}):${C_RESET}"
+    local key value
+    while IFS= read -r line; do
+        key="${line%%=*}"; value="${line#*=}"
+        [[ -z "${key}" || "${key}" == "${line}" ]] && continue
+        printf "  %-14s %s\n" "${key}" "${value}"
+    done < "${STACK_ENV}"
+}
+
+stack_model_arg() {
+    # echo the saved MODEL (if any) — llama needs a file path, others a name
+    local model
+    model="$(stack_get MODEL)"
+    [[ -n "${model}" ]] && echo "${model}"
+    return 0
+}
+
+start_stack() {
+    local dry_run="$1"
+    local runtime gateway port model gateway_cmd=""
+
+    if [[ ! -f "${STACK_ENV}" ]]; then
+        echo -e "${C_RED}[ERROR]${C_RESET} No saved stack (${STACK_ENV})."
+        echo "  Run the guided setup first: ./bootstrap.sh --configure"
+        return 1
+    fi
+
+    runtime="$(stack_get RUNTIME)"
+    gateway="$(stack_get GATEWAY)"
+    port="$(stack_get PORT)"
+    model="$(stack_model_arg)"
+
+    if [[ -z "${runtime}" ]]; then
+        echo -e "${C_RED}[ERROR]${C_RESET} stack.env has no RUNTIME key — rerun ./bootstrap.sh --configure"
+        return 1
+    fi
+
+    # Routers are launched alongside (never instead of) the runtime
+    case "${gateway}" in
+        9router)   gateway_cmd="9router" ;;
+        omniroute) gateway_cmd="omniroute" ;;
+    esac
+
+    echo -e "${C_BOLD}[stack]${C_RESET} runtime=${runtime}${model:+ model=${model}} gateway=${gateway:-integrated} port=${port:-auto}"
+
+    if [[ "${dry_run}" == "yes" ]]; then
+        echo "  (dry-run) would execute: ai-start ${runtime}${model:+ ${model}}"
+        [[ -n "${gateway_cmd}" ]] && echo "  (dry-run) would execute: ai-router start ${gateway_cmd}"
+        return 0
+    fi
+
+    # Start the chosen gateway first so it is ready when the runtime comes up
+    if [[ -n "${gateway_cmd}" && -f "${SCRIPT_DIR}/bin/ai-router" ]]; then
+        bash "${SCRIPT_DIR}/bin/ai-router" start "${gateway_cmd}" || true
+    fi
+
+    case "${runtime}" in
+        ollama)
+            start_ollama "${model}"
+            ;;
+        vllm)
+            if [[ -z "${model}" ]]; then
+                echo -e "${C_RED}[ERROR]${C_RESET} stack.env has no MODEL — vLLM needs one. Rerun the wizard or: ai-start vllm <model>" >&2
+                return 1
+            fi
+            start_vllm "${model}"
+            ;;
+        llamacpp)
+            if [[ -z "${model}" ]]; then
+                echo -e "${C_RED}[ERROR]${C_RESET} stack.env has no MODEL — llama.cpp needs a GGUF path. Rerun the wizard or: ai-start llama <path.gguf>" >&2
+                return 1
+            fi
+            start_llamacpp "${model}"
+            ;;
+        *)
+            echo -e "${C_RED}[ERROR]${C_RESET} unknown RUNTIME '${runtime}' in stack.env" >&2
+            return 1
+            ;;
+    esac
+}
+
+# =============================================================================
 # Show main menu
 # =============================================================================
 show_menu() {
@@ -149,8 +249,20 @@ if [[ $# -ge 1 ]]; then
                 GPU_FLAGS+=("$1" "${2:-}"); shift 2 ;;
             --fit)
                 GPU_FLAGS+=("$1"); shift ;;
+            --stack)
+                shift
+                # optional immediate value: --stack dry-run
+                if [[ "${1:-}" == "dry-run" ]]; then
+                    start_stack yes
+                    exit $?
+                fi
+                start_stack no
+                exit $? ;;
             -h|--help|help)
                 echo "Usage: ai-start [ollama|vllm|llama] [MODEL]"
+                echo "       ai-start --stack             # launch the wizard-saved stack"
+                echo "       ai-start --stack dry-run     # show what would launch, run nothing"
+                echo "       ai-start stack               # show the saved stack config"
                 echo "       ai-start                    # interactive menu"
                 echo ""
                 echo "Multi-GPU options (delegated to model-run):"
@@ -191,6 +303,9 @@ if [[ $# -ge 1 ]]; then
 
     # No GPU flags: original dispatch on the first positional
     case "${POSITIONALS[0]:-}" in
+        stack)
+            show_stack
+            ;;
         ollama)
             start_ollama "${POSITIONALS[1]:-}"
             ;;

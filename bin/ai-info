@@ -22,6 +22,16 @@ if [[ -f "${AI_HOME}/config/machine.env" ]]; then
 else
     echo -e "${C_YELLOW}No machine.env found. Run ./bootstrap.sh to generate.${C_RESET}"
 fi
+# --- Saved stack (from the guided wizard: ./bootstrap.sh --configure) ---
+AI_STACK_ENV="${AI_HOME}/config/stack.env"
+if [[ -f "${AI_STACK_ENV}" ]]; then
+    echo -e "${C_BOLD}Saved Stack (launch with: ai-start --stack):${C_RESET}"
+    grep -E '^(RUNTIME|MODEL|GATEWAY|PORT|BIND_ADDRESS)=' "${AI_STACK_ENV}" 2>/dev/null | while read -r line; do
+        printf "  %s\n" "${line}"
+    done
+    echo ""
+fi
+
 # --- Multi-GPU summary ---
 if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -56,6 +66,7 @@ echo ""
 
 echo -e "${C_BOLD}Commands:${C_RESET}"
 echo "  gpu-status     — GPU and system status"
+echo "  ai-doctor      — Whole-stack health check"
 echo "  gpu-list       — List all GPUs with details"
 echo "  gpu-topology   — GPU interconnect (NVLink/PCIe)"
 echo "  gpu-test       — Run GPU compute tests (--multi for multi-GPU)"

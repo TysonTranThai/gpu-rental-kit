@@ -2,7 +2,7 @@
   🇬🇧 <a href="README.md">English</a> &nbsp;|&nbsp; 🇻🇳 <a href="README.vi.md">Tiếng Việt</a> &nbsp;|&nbsp; 🇨🇳 <a href="README.zh-CN.md">中文</a>
 </p>
 
-<!-- SOURCE-REVISION: 3288716221 -->
+<!-- SOURCE-REVISION: 3292620100 -->
 
 ---
 
@@ -587,6 +587,13 @@ ssh -N -L 8000:127.0.0.1:8000 user@SERVER_IP
 
 The remote service remains private, and your local application connects to `localhost`.
 
+Verify the tunnel from a second terminal — `api-status` works on macOS and Linux (Windows users: `bin\api-status.ps1`):
+
+```bash
+api-status             # checks llama.cpp (8080) and vLLM (8000)
+api-status --port 8080 # one specific local port
+```
+
 ### B. Public IP and port — advanced
 
 You can deliberately bind a service to `0.0.0.0` and permit a provider firewall port, but this is not recommended for a first setup. Configure authentication where supported and restrict source IPs. Do not expose Ollama's raw port 11434 to the public internet without a carefully secured network design.
@@ -653,13 +660,14 @@ These are the commands installed into `~/ai/bin` by setup:
 | `model-download` | Download a registered alias, Hugging Face model, or Ollama model |
 | `model-run` | Run a model using Ollama, vLLM, or llama.cpp (`--gpu N`, `--gpus all\|0,1\|auto`, `--gpu-mode shard\|workload`, `--size-gb N`, `--fit`) |
 | `model-stop` | Stop a running model process |
-| `ai-start` | Start Ollama, vLLM, or llama.cpp; GPU flags (`--gpus 0,1`, `--gpu 0`, ...) are delegated to model-run |
+| `ai-start` | Start Ollama, vLLM, or llama.cpp; GPU flags (`--gpus 0,1`, `--gpu 0`, ...) are delegated to model-run; `--stack` launches the runtime + gateway saved by the guided wizard (`./bootstrap.sh --configure`) |
 | `ai-stop` | Stop the active AI runtime |
 | `ai-router` | Manage AI routers (9Router / OmniRoute): `status`, `start`, `stop`, `logs`, `health` |
 | `ai-info` | Show AI environment information |
+| `ai-doctor` | Whole-stack health check (disk, GPU, venv/torch, runtimes, ports, APIs, routers, logs, persistence) |
 | `ai-backup` | Back up configuration; `--include-models` includes model files |
 
-Windows equivalents live in `bin\*.ps1` and use the SAME names (`gpu-status.ps1`, `gpu-test.ps1`, `model-list.ps1`, `model-download.ps1`, `model-run.ps1`, `model-stop.ps1`, `ai-start.ps1`, `ai-stop.ps1`, `ai-info.ps1`, `ai-backup.ps1`), plus `api-status.ps1` for tunnel checks. They execute against the configured REMOTE server over SSH — see [Windows Support](#windows-support).
+Windows equivalents live in `bin\*.ps1` and use the SAME names (`gpu-status.ps1`, `gpu-test.ps1`, `model-list.ps1`, `model-download.ps1`, `model-run.ps1`, `model-stop.ps1`, `ai-start.ps1`, `ai-stop.ps1`, `ai-info.ps1`, `ai-doctor.ps1`, `ai-backup.ps1`), plus `api-status.ps1` for tunnel checks. They execute against the configured REMOTE server over SSH — see [Windows Support](#windows-support).
 
 Useful additional commands include `ai-logs`, `model-logs`, and `model-stop`.
 
@@ -682,6 +690,14 @@ gpu-test
 ```bash
 model-download llama3.1-8b
 ai-start ollama llama3.1:8b
+```
+
+### I ran the guided wizard — launch my saved stack
+
+```bash
+ai-start stack            # show what the wizard saved
+ai-start --stack dry-run  # preview the launch commands without running them
+ai-start --stack          # start the saved runtime (and gateway, if chosen)
 ```
 
 Ollama listens on localhost port `11434` by default. Use an SSH tunnel rather than exposing that port publicly.
@@ -744,6 +760,7 @@ Copy the resulting backup files to storage outside the rental before deleting th
 | Symptom | Likely cause | Diagnose | Next step |
 |---|---|---|---|
 | `sudo: command not found` during setup | Minimal provider containers often ship without sudo | `id -u`; `command -v sudo` | Running as root? The toolkit runs privileged commands directly — no sudo needed. Non-root? Rerun as root, or install sudo (`apt-get install -y sudo`) |
+| Something feels off after setup | Anything from bad disk to a dead API | `ai-doctor` | One read-only command sweeps disk, GPU, venv/torch, runtimes, ports, APIs, routers, logs, and persistence. Exit code = number of FAILs |
 | No NVIDIA GPU detected | Wrong machine/image, GPU not attached, or provider issue | `nvidia-smi` | Confirm the rental includes an NVIDIA GPU and ask the provider about passthrough |
 | CUDA unavailable | Driver, CUDA/PyTorch mismatch, or broken environment | `nvidia-smi`; `~/ai/venv/bin/python -c 'import torch; print(torch.cuda.is_available())'` | Review the setup log; do not install a random driver over a provider image |
 | SSH connection refused | Wrong IP/port, firewall, or SSH service unavailable | `ssh -vvv -p PORT user@SERVER_IP` | Verify provider connection details and allow the configured SSH port |
@@ -765,6 +782,13 @@ View logs with:
 ai-logs
 model-logs all
 cat ~/ai/logs/setup-*.log
+```
+
+Run a full read-only diagnosis:
+
+```bash
+ai-doctor            # human-readable verdicts (PASS/WARN/FAIL/SKIP)
+ai-doctor --json     # machine-readable report for scripts/monitors
 ```
 
 ## FAQ

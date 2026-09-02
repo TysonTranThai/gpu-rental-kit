@@ -536,7 +536,7 @@ EOF
 echo -e "${C_BOLD}[final] Installing management commands...${C_RESET}"
 
 # Copy/symlink bin commands into AI_HOME/bin
-for cmd in gpu-status gpu-test model-list model-download model-run model-stop model-logs ai-start ai-stop ai-logs ai-info ai-backup ai-router; do
+for cmd in gpu-status gpu-test model-list model-download model-run model-stop model-logs ai-start ai-stop ai-logs ai-info ai-backup ai-router ai-doctor; do
     if [[ -f "${SCRIPT_DIR}/bin/${cmd}" ]]; then
         cp -f "${SCRIPT_DIR}/bin/${cmd}" "${AI_BIN_DIR}/${cmd}" 2>/dev/null || true
         chmod +x "${AI_BIN_DIR}/${cmd}" 2>/dev/null || true
@@ -617,6 +617,7 @@ echo -e "    Storage:     ${STORAGE_CLASSIFICATION}"
 echo ""
 echo -e "  ${C_BOLD}Quick commands:${C_RESET}"
 echo -e "    gpu-status                     # Check GPU"
+echo -e "    ai-doctor                      # Whole-stack health check"
 echo -e "    gpu-test                       # Test GPU compute"
 echo -e "    model-list                     # List available models"
 echo -e "    model-download <model>         # Download a model"

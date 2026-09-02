@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# =============================================================================
+# api-status — check the local end of an API tunnel (macOS / Linux clients)
+# =============================================================================
+# Checks whether an OpenAI-compatible inference API answers on localhost.
+# This works ONLY while an SSH tunnel to the remote GPU server is open:
+#
+#   ssh -N -L 8080:127.0.0.1:8080 user@SERVER_IP     # llama.cpp (default)
+#   ssh -N -L 8000:127.0.0.1:8000 user@SERVER_IP     # vLLM
+#
+# This command NEVER talks to a remote host directly: everything goes to
+# 127.0.0.1, where your tunnel forwards it. It also never prints credentials.
+#
+# Usage:
+#   api-status                check llama.cpp (8080) and vLLM (8000)
+#   api-status -p 8080        check one specific local port
+#   api-status --port 8080    same, long form
+#   api-status -h             help
+#
+# Exit code: 0 when at least one API answers, 1 otherwise.
+# =============================================================================
+set -Eeuo pipefail
+
+C_RESET='\033[0m'; C_BOLD='\033[1m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'; C_RED='\033[0;31m'
+
+usage() {
+    cat <<'USAGE'
+Usage: api-status [-p PORT | --port PORT] [-h]
+
+Check whether an OpenAI-compatible API answers on localhost (127.0.0.1).
+Works only while an SSH tunnel to the remote GPU server is open:
+
+    ssh -N -L 8080:127.0.0.1:8080 user@SERVER_IP     # llama.cpp
+    ssh -N -L 8000:127.0.0.1:8000 user@SERVER_IP     # vLLM
+
+Options:
+  -p, --port PORT   check one specific local port (default: 8080 and 8000)
+  -h                show this help
+
+Exit code: 0 when at least one API answers, 1 otherwise.
+USAGE
+}
+
+PORTS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -p|--port)
+            if [[ $# -lt 2 || ! "$2" =~ ^[0-9]+$ ]]; then
+                echo "api-status: --port needs a number" >&2
+                usage >&2
+                exit 1
+            fi
+            PORTS+=("$2")
+            shift
+            ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "api-status: unknown option: $1" >&2; usage >&2; exit 1 ;;
+    esac
+    shift
+done
+if [[ ${#PORTS[@]} -eq 0 ]]; then
+    # Same defaults the Windows client uses (client.json LlamaCppPort/VllmPort)
+    PORTS=(8080 8000)
+fi
+
+echo -e "${C_BOLD}GPU Rental Kit — API tunnel status (LOCALHOST ONLY)${C_RESET}"
+echo ""
+
+any_ok=0
+port_in_use() {
+    local port="$1"
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1
+    elif command -v ss >/dev/null 2>&1; then
+        ss -ltn 2>/dev/null | grep -q ":${port} "
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -an 2>/dev/null | grep -q "[.:]${port} .*LISTEN"
+    else
+        (exec 3<>"/dev/tcp/127.0.0.1/${port}") >/dev/null 2>&1
+    fi
+}
+
+for port in "${PORTS[@]}"; do
+    if ! command -v curl >/dev/null 2>&1; then
+        echo -e "  ${C_YELLOW}[SKIP]${C_RESET} curl not installed — cannot probe port ${port}"
+        continue
+    fi
+    if ! port_in_use "${port}"; then
+        echo -e "  ${C_RED}[DOWN]${C_RESET} nothing is listening on 127.0.0.1:${port}"
+        echo "         open the tunnel first: ssh -N -L ${port}:127.0.0.1:${port} user@SERVER_IP"
+        continue
+    fi
+    resp="$(curl -fsS --max-time 5 "http://127.0.0.1:${port}/v1/models" 2>/dev/null || true)"
+    if [[ -n "${resp}" ]]; then
+        # count models without requiring jq: rough count of "id" occurrences
+        n_models="$(printf '%s' "${resp}" | grep -o '"id"' | wc -l | tr -d ' ' || true)"
+        echo -e "  ${C_GREEN}[OK]${C_RESET}   API OK            http://127.0.0.1:${port}/v1  (${n_models} model(s))"
+        any_ok=1
+    else
+        echo -e "  ${C_RED}[DOWN]${C_RESET}   API NOT REACHABLE http://127.0.0.1:${port}/v1"
+        echo "         Open the tunnel first: ssh -N -L ${port}:127.0.0.1:${port} user@SERVER_IP"
+    fi
+done
+
+echo ""
+if [[ "${any_ok}" -eq 0 ]]; then
+    echo -e "${C_YELLOW}No tunnel API reachable. Start a runtime on the server first${C_RESET}"
+    echo "(e.g. ai-start llama /path/model.gguf), then open a tunnel."
+    exit 1
+fi
+exit 0

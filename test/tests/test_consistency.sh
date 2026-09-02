@@ -39,7 +39,7 @@ done
 
 # --- Required bin commands ---
 for f in gpu-status gpu-test model-list model-download model-run model-stop \
-         model-logs ai-start ai-stop ai-logs ai-info ai-backup; do
+         model-logs ai-start ai-stop ai-logs ai-info ai-backup ai-doctor; do
     if [[ -f "${KIT_ROOT}/bin/${f}" ]]; then
         if [[ -x "${KIT_ROOT}/bin/${f}" ]]; then
             PASS_COUNT=$((PASS_COUNT + 1))

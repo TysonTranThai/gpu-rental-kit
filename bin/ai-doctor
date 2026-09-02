@@ -1,0 +1,434 @@
+#!/usr/bin/env bash
+# =============================================================================
+# ai-doctor — whole-stack health check (READ-ONLY)
+# =============================================================================
+# One command that diagnoses the most common failure modes from the README
+# troubleshooting table: disk space, GPU/driver/CUDA, python venv + PyTorch,
+# runtimes (ollama / llama.cpp / vLLM), listening ports, API reachability,
+# AI routers, recent log errors, and storage persistence.
+#
+# Honesty rules (same as the test suite):
+#   PASS  — verified working
+#   WARN  — works, but needs attention
+#   FAIL  — broken / must fix
+#   SKIP  — cannot be judged on this machine (component absent/disabled).
+#           SKIP is NEVER counted as a failure.
+#
+# Read-only: ai-doctor never installs, kills, restarts, or writes anything.
+#
+# Usage:
+#   ai-doctor [--json] [--lines N] [-h|--help]
+#
+# Exit code: number of FAIL verdicts (capped at 125); 0 when healthy.
+# =============================================================================
+set -Eeuo pipefail
+
+AI_HOME="${AI_HOME:-${HOME}/ai}"
+AI_BIN_DIR="${AI_BIN_DIR:-${AI_HOME}/bin}"
+AI_VENV_DIR="${AI_VENV_DIR:-${AI_HOME}/venv}"
+AI_LOGS_DIR="${AI_LOGS_DIR:-${AI_HOME}/logs}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+C_RESET='\033[0m'; C_BOLD='\033[1m'; C_GREEN='\033[0;32m'; C_YELLOW='\033[0;33m'
+C_RED='\033[0;31m'; C_CYAN='\033[0;36m'
+
+# Optional i18n (en/vi/zh-CN) — falls back to the English literals below when
+# catalogs or i18n.sh are unavailable (installed copies, minimal machines).
+if [[ -f "${SCRIPT_DIR}/scripts/i18n.sh" ]]; then
+    # shellcheck source=scripts/i18n.sh
+    source "${SCRIPT_DIR}/scripts/i18n.sh"
+    i18n_init
+fi
+if ! declare -F tr >/dev/null 2>&1; then
+    tr() { local k="$1"; shift; case "${k}" in
+        DOCTOR_TITLE)      echo "GPU RENTAL KIT — ai-doctor (read-only health check)" ;;
+        DOCTOR_SUMMARY)    echo "ai-doctor summary: $1 pass, $2 warn, $3 fail, $4 skip" ;;
+        DOCTOR_SKIP_NOTE)  echo "(SKIP = not applicable on this machine — never a failure)" ;;
+        DOCTOR_FIX_HINT)   echo "Fix the FAIL items above, then rerun ai-doctor." ;;
+        DOCTOR_ALL_GOOD)   echo "All good." ;;
+        *)                 echo "${k}" ;;
+    esac; }
+fi
+
+# Load repo defaults when running from a checkout (installed copies fall back
+# to the inline defaults below). Existing environment always wins via :-.
+if [[ -f "${SCRIPT_DIR}/config/defaults.env" ]]; then
+    # shellcheck source=config/defaults.env
+    source "${SCRIPT_DIR}/config/defaults.env"
+fi
+LLAMACPP_PORT="${LLAMACPP_PORT:-8080}"
+VLLM_PORT="${VLLM_PORT:-8000}"
+OLLAMA_PORT="${OLLAMA_PORT:-11434}"
+ROUTER_9ROUTER_PORT="${ROUTER_9ROUTER_PORT:-20128}"
+ROUTER_9ROUTER_ENABLED="${ROUTER_9ROUTER_ENABLED:-yes}"
+ROUTER_OMNIROUTE_PORT="${ROUTER_OMNIROUTE_PORT:-20128}"
+ROUTER_OMNIROUTE_ENABLED="${ROUTER_OMNIROUTE_ENABLED:-yes}"
+
+usage() {
+    cat <<'USAGE'
+Usage: ai-doctor [--json] [--lines N] [-h|--help]
+
+Whole-stack health check for GPU Rental Kit (read-only).
+
+Checks: disk space, GPU/driver/CUDA, python venv + PyTorch, runtimes
+(ollama / llama.cpp / vLLM), listening ports + API probes, AI routers,
+recent log errors, storage persistence.
+
+Options:
+  --json      Machine-readable JSON report
+  --lines N   Recent log lines swept per file (default 200)
+  -h, --help  Show this help
+
+Verdicts: PASS verified | WARN attention | FAIL broken | SKIP not applicable
+Exit code: number of FAIL verdicts (0 when healthy)
+USAGE
+}
+
+# =============================================================================
+# Result recording
+# =============================================================================
+MODE_TEXT=1
+LOG_LINES=200
+CHECKS=()
+V_PASS=0; V_WARN=0; V_FAIL=0; V_SKIP=0
+
+print_verdict() {
+    local color
+    case "$2" in
+        PASS) color="${C_GREEN}" ;;
+        WARN) color="${C_YELLOW}" ;;
+        FAIL) color="${C_RED}" ;;
+        *)    color="${C_CYAN}" ;;
+    esac
+    printf "  ${color}[%s]${C_RESET} %-16s %s\n" "$2" "$1" "$3"
+}
+
+# record NAME VERDICT DETAIL — register a check result and print it (text mode)
+record() {
+    local name="$1" verdict="$2" detail="$3"
+    CHECKS+=("${name}|${verdict}|${detail}")
+    case "${verdict}" in
+        PASS) V_PASS=$((V_PASS + 1)) ;;
+        WARN) V_WARN=$((V_WARN + 1)) ;;
+        FAIL) V_FAIL=$((V_FAIL + 1)) ;;
+        *)    V_SKIP=$((V_SKIP + 1)) ;;
+    esac
+    [[ "${MODE_TEXT}" -eq 1 ]] && print_verdict "${name}" "${verdict}" "${detail}"
+    return 0
+}
+
+section() {
+    if [[ "${MODE_TEXT}" -eq 1 ]]; then
+        echo ""
+        echo -e "${C_BOLD}── $1 ──${C_RESET}"
+    fi
+    return 0
+}
+
+# =============================================================================
+# Small helpers (mirroring scripts/setup_routers.sh conventions)
+# =============================================================================
+port_in_use() {
+    local port="$1"
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1
+    elif command -v ss >/dev/null 2>&1; then
+        ss -ltn 2>/dev/null | grep -q ":${port} "
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -an 2>/dev/null | grep -q "[.:]${port} .*LISTEN"
+    else
+        (exec 3<>"/dev/tcp/127.0.0.1/${port}") >/dev/null 2>&1
+    fi
+}
+
+http_ok() {
+    local port="$1" path="$2"
+    command -v curl >/dev/null 2>&1 || return 1
+    curl -fsS --max-time 2 "http://127.0.0.1:${port}${path}" >/dev/null 2>&1
+}
+
+json_escape() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+# =============================================================================
+# 1. Disk space on AI_HOME
+# =============================================================================
+check_disk() {
+    if ! command -v df >/dev/null 2>&1; then
+        record "disk" "SKIP" "df unavailable"
+        return 0
+    fi
+    if [[ ! -d "${AI_HOME}" ]]; then
+        record "disk" "SKIP" "${AI_HOME} does not exist yet (run ./bootstrap.sh --remote-gpu)"
+        return 0
+    fi
+    local free_kb free_mb free_gb
+    free_kb="$(df -k "${AI_HOME}" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
+    if [[ -z "${free_kb}" ]]; then
+        record "disk" "SKIP" "could not stat ${AI_HOME}"
+        return 0
+    fi
+    free_mb=$((free_kb / 1024))
+    free_gb=$((free_mb / 1024))
+    if (( free_kb < 1024 * 1024 )); then
+        record "disk" "FAIL" "only ${free_mb}MB free on ${AI_HOME} — model downloads will fail"
+    elif (( free_kb < 5 * 1024 * 1024 )); then
+        record "disk" "WARN" "${free_gb}GB free on ${AI_HOME} — models fill disks fast"
+    else
+        record "disk" "PASS" "${free_gb}GB free on ${AI_HOME}"
+    fi
+    return 0
+}
+
+# =============================================================================
+# 2. GPU / driver / CUDA
+# =============================================================================
+check_gpu() {
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        local smi_out gpu_count
+        smi_out="$(nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader 2>/dev/null | head -1)"
+        if [[ -n "${smi_out}" ]]; then
+            gpu_count="$(nvidia-smi --list-gpus 2>/dev/null | wc -l | tr -d ' ' || true)"
+            [[ -z "${gpu_count}" ]] && gpu_count="1"
+            record "gpu" "PASS" "${gpu_count} GPU(s): ${smi_out}"
+        else
+            record "gpu" "FAIL" "nvidia-smi present but not working (driver problem?)"
+        fi
+    else
+        record "gpu" "SKIP" "nvidia-smi not found (no NVIDIA GPU here — fine for a client machine)"
+    fi
+    return 0
+}
+
+# =============================================================================
+# 3. Python venv + PyTorch CUDA
+# =============================================================================
+check_python() {
+    if [[ ! -d "${AI_VENV_DIR}" ]]; then
+        record "python-torch" "SKIP" "no venv at ${AI_VENV_DIR} (optional — vLLM needs it)"
+        return 0
+    fi
+    local vpy="${AI_VENV_DIR}/bin/python"
+    if [[ ! -x "${vpy}" ]]; then
+        record "python-torch" "FAIL" "venv exists but ${vpy} is missing — rerun ./bootstrap.sh --remote-gpu"
+        return 0
+    fi
+    local torch_state
+    torch_state="$("${vpy}" -c 'import torch; print("cuda" if torch.cuda.is_available() else "cpu")' 2>/dev/null || echo no-torch)"
+    case "${torch_state}" in
+        cuda)     record "python-torch" "PASS" "venv python OK, PyTorch sees CUDA" ;;
+        cpu)      record "python-torch" "WARN" "venv python OK but PyTorch CUDA NOT available" ;;
+        no-torch) record "python-torch" "WARN" "PyTorch not importable (fine for llama.cpp/Ollama, breaks vLLM)" ;;
+        *)        record "python-torch" "WARN" "unexpected torch state: ${torch_state}" ;;
+    esac
+    return 0
+}
+
+# =============================================================================
+# 4. Runtimes installed (all optional — missing is SKIP, never FAIL)
+# =============================================================================
+check_runtime() {
+    local label="$1" bin="$2" desc="$3"
+    if [[ -x "${bin}" ]] || command -v "${bin}" >/dev/null 2>&1; then
+        record "${label}" "PASS" "${desc} installed"
+    else
+        record "${label}" "SKIP" "${desc} not installed (optional)"
+    fi
+    return 0
+}
+
+check_runtimes() {
+    check_runtime "runtime-ollama"   "ollama"                        "Ollama runtime"
+    check_runtime "runtime-llamacpp" "${AI_BIN_DIR}/llamacpp-serve"  "llama.cpp runtime"
+    check_runtime "runtime-vllm"     "${AI_VENV_DIR}/bin/vllm"       "vLLM runtime"
+    return 0
+}
+
+# =============================================================================
+# 5+6. Listening ports + API reachability
+# =============================================================================
+probe_api() {
+    local label="$1" port="$2" path="$3" desc="$4"
+    if ! port_in_use "${port}"; then
+        record "${label}" "SKIP" "${desc} not listening on ${port} (start with ai-start)"
+        return 0
+    fi
+    if http_ok "${port}" "${path}"; then
+        record "${label}" "PASS" "${desc} answering on 127.0.0.1:${port}"
+    else
+        record "${label}" "WARN" "something listens on ${port} but ${path} did not answer (port conflict? still starting?)"
+    fi
+    return 0
+}
+
+check_apis() {
+    probe_api "api-ollama"   "${OLLAMA_PORT}"   "/api/tags"  "Ollama API"
+    probe_api "api-llamacpp" "${LLAMACPP_PORT}" "/v1/models" "llama.cpp API"
+    probe_api "api-vllm"     "${VLLM_PORT}"     "/v1/models" "vLLM API"
+    return 0
+}
+
+# =============================================================================
+# 7. AI routers (9Router / OmniRoute share default port 20128 upstream)
+# =============================================================================
+check_router() {
+    local label="$1" enabled="$2" port="$3" desc="$4" other_port="$5" other_running="$6"
+    if [[ "${enabled}" != "yes" ]]; then
+        record "${label}" "SKIP" "${desc} disabled in config"
+    elif port_in_use "${port}"; then
+        if http_ok "${port}" "/"; then
+            record "${label}" "PASS" "${desc} answering on 127.0.0.1:${port}"
+        else
+            record "${label}" "WARN" "something listens on ${port} but ${desc} did not answer"
+        fi
+    elif [[ "${other_running}" == "yes" && "${port}" == "${other_port}" ]]; then
+        record "${label}" "SKIP" "port ${port} is occupied by the other router — set a different ${label} port"
+    else
+        record "${label}" "SKIP" "${desc} not running (optional; ai-router start)"
+    fi
+    return 0
+}
+
+check_routers() {
+    local r9_running="no" orn_running="no"
+    port_in_use "${ROUTER_9ROUTER_PORT}"   && r9_running="yes" || true
+    port_in_use "${ROUTER_OMNIROUTE_PORT}" && orn_running="yes" || true
+    check_router "router-9router"   "${ROUTER_9ROUTER_ENABLED}"   "${ROUTER_9ROUTER_PORT}"   "9Router"   "${ROUTER_OMNIROUTE_PORT}" "${orn_running}"
+    check_router "router-omniroute" "${ROUTER_OMNIROUTE_ENABLED}" "${ROUTER_OMNIROUTE_PORT}" "OmniRoute" "${ROUTER_9ROUTER_PORT}"   "${r9_running}"
+    return 0
+}
+
+# =============================================================================
+# 8. Recent log sweep (errors are WARN — old failures may be stale)
+# =============================================================================
+check_logs() {
+    if [[ ! -d "${AI_LOGS_DIR}" ]] || ! compgen -G "${AI_LOGS_DIR}/*.log" >/dev/null 2>&1; then
+        record "logs" "SKIP" "no log files in ${AI_LOGS_DIR} yet"
+        return 0
+    fi
+    local log_files=() lf n err_total=0 newest="" per_file=""
+    while IFS= read -r lf; do
+        [[ -n "${lf}" ]] && log_files+=("${lf}")
+    done < <(ls -t "${AI_LOGS_DIR}"/*.log 2>/dev/null | head -10)
+    for lf in ${log_files[@]+"${log_files[@]}"}; do
+        n="$(tail -n "${LOG_LINES}" "${lf}" 2>/dev/null | grep -cE 'ERROR|FATAL|CRITICAL' || true)"
+        if [[ "${n}" -gt 0 ]]; then
+            err_total=$((err_total + n))
+            [[ -z "${newest}" ]] && newest="$(basename "${lf}")"
+            per_file+="$(basename "${lf}"):${n} "
+        fi
+    done
+    if [[ "${err_total}" -eq 0 ]]; then
+        record "logs" "PASS" "no ERROR/FATAL in last ${LOG_LINES} lines of recent logs"
+    else
+        record "logs" "WARN" "${err_total} error line(s) — ${per_file}inspect with: ai-logs"
+    fi
+    return 0
+}
+
+# =============================================================================
+# 9. Storage persistence advisory (from machine.env, written by setup)
+# =============================================================================
+check_persistence() {
+    local machine_env="${AI_HOME}/config/machine.env"
+    if [[ ! -f "${machine_env}" ]]; then
+        record "persistence" "WARN" "no machine.env — run ./bootstrap.sh --remote-gpu to generate one"
+        return 0
+    fi
+    local cls adv surv
+    cls="$(grep -E '^STORAGE_CLASSIFICATION=' "${machine_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true)"
+    adv="$(grep -E '^STORAGE_ADVISORY=' "${machine_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true)"
+    surv="$(grep -E '^STORAGE_SURVIVES_RENTAL_END=' "${machine_env}" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true)"
+    if [[ "${surv}" == "no" ]]; then
+        record "persistence" "WARN" "storage does NOT survive rental end — back up with ai-backup before returning the VM"
+    elif [[ -z "${cls}" || "${cls}" == "unknown" ]]; then
+        record "persistence" "WARN" "persistence UNKNOWN — do not rely on local storage"
+    else
+        record "persistence" "PASS" "storage classification: ${cls}"
+    fi
+    [[ -n "${adv}" && "${MODE_TEXT}" -eq 1 ]] && echo "         advisory: ${adv}"
+    return 0
+}
+
+# =============================================================================
+# Output
+# =============================================================================
+emit_json() {
+    local first=1 out item name rest verdict detail
+    out="{\"summary\":{\"pass\":${V_PASS},\"warn\":${V_WARN},\"fail\":${V_FAIL},\"skip\":${V_SKIP}},\"checks\":["
+    for item in ${CHECKS[@]+"${CHECKS[@]}"}; do
+        name="${item%%|*}"; rest="${item#*|}"
+        verdict="${rest%%|*}"; detail="${rest#*|}"
+        [[ "${first}" -eq 0 ]] && out+=","
+        out+="{\"name\":\"$(json_escape "${name}")\",\"verdict\":\"${verdict}\",\"detail\":\"$(json_escape "${detail}")\"}"
+        first=0
+    done
+    out+="]}"
+    printf '%s\n' "${out}"
+}
+
+print_summary() {
+    echo ""
+    echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
+    echo -e "  ${C_BOLD}$(tr DOCTOR_SUMMARY "${V_PASS}" "${V_WARN}" "${V_FAIL}" "${V_SKIP}")${C_RESET}"
+    echo "  $(tr DOCTOR_SKIP_NOTE)"
+    if [[ "${V_FAIL}" -gt 0 ]]; then
+        echo -e "  ${C_RED}$(tr DOCTOR_FIX_HINT)${C_RESET}"
+    elif [[ "${V_WARN}" -eq 0 ]]; then
+        echo -e "  ${C_GREEN}$(tr DOCTOR_ALL_GOOD)${C_RESET}"
+    fi
+    echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
+}
+
+# =============================================================================
+# Main
+# =============================================================================
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --json)  MODE_TEXT=0 ;;
+        --lines)
+            if [[ $# -lt 2 || ! "$2" =~ ^[0-9]+$ ]]; then
+                echo "ai-doctor: --lines needs a number" >&2
+                usage
+                exit 1
+            fi
+            LOG_LINES="$2"
+            shift
+            ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "ai-doctor: unknown option: $1" >&2; usage; exit 1 ;;
+    esac
+    shift
+done
+
+if [[ "${MODE_TEXT}" -eq 1 ]]; then
+    echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
+    echo -e "${C_BOLD}  $(tr DOCTOR_TITLE)${C_RESET}"
+    echo -e "${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
+fi
+
+section "Disk"
+check_disk
+section "GPU"
+check_gpu
+section "Python"
+check_python
+section "Runtimes"
+check_runtimes
+section "Services"
+check_apis
+section "Routers"
+check_routers
+section "Logs"
+check_logs
+section "Persistence"
+check_persistence
+
+if [[ "${MODE_TEXT}" -eq 1 ]]; then
+    print_summary
+else
+    emit_json
+fi
+
+exit $(( V_FAIL > 125 ? 125 : V_FAIL ))
