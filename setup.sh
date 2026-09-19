@@ -110,6 +110,13 @@ i18n_init
 export I18N_LANG
 
 # =============================================================================
+# Progress bar — one-line "[####----] 40%" under each stage header, so the
+# user can see how much of the 15-stage install is left. Source AFTER i18n.sh.
+# =============================================================================
+# shellcheck source=scripts/progress.sh
+source "${SCRIPT_DIR}/scripts/progress.sh"
+
+# =============================================================================
 # Error handler
 # =============================================================================
 on_error() {
@@ -236,6 +243,7 @@ if [[ "${WIZARD_MODE}" == "yes" ]]; then
 fi
 
 echo -e "${C_BOLD}[1/15] $(tr STAGE_PRIVILEGES)...${C_RESET}"
+show_progress 0 15
 # shellcheck source=scripts/privileges.sh
 source "${SCRIPT_DIR}/scripts/privileges.sh"
 if [[ "${EUID}" -eq 0 ]]; then
@@ -265,6 +273,7 @@ log_info "Privilege check complete (SUDO='${SUDO}')."
 # Step 2: Detect OS
 # =============================================================================
 echo -e "${C_BOLD}[2/15] $(tr STAGE_OS)...${C_RESET}"
+show_progress 1 15
 # shellcheck source=scripts/detect_environment.sh
 source "${SCRIPT_DIR}/scripts/detect_environment.sh"
 detect_os
@@ -279,6 +288,7 @@ fi
 # Step 3: Detect Docker container
 # =============================================================================
 echo -e "${C_BOLD}[3/15] $(tr STAGE_CONTAINER)...${C_RESET}"
+show_progress 2 15
 detect_virtualization
 log_info "Container environment: ${IS_DOCKER}, VM: ${IS_VM}, WSL: ${IS_WSL}"
 
@@ -286,6 +296,7 @@ log_info "Container environment: ${IS_DOCKER}, VM: ${IS_VM}, WSL: ${IS_WSL}"
 # Step 4: Detect GPU
 # =============================================================================
 echo -e "${C_BOLD}[4/15] $(tr STAGE_GPU)...${C_RESET}"
+show_progress 3 15
 # shellcheck source=scripts/detect_gpu.sh
 source "${SCRIPT_DIR}/scripts/detect_gpu.sh"
 run_gpu_detection
@@ -313,6 +324,7 @@ fi
 # Step 5: Detect NVIDIA driver
 # =============================================================================
 echo -e "${C_BOLD}[5/15] $(tr STAGE_DRIVER)...${C_RESET}"
+show_progress 4 15
 if [[ "${HAS_NVIDIA_GPU}" == "yes" ]] && [[ "${NVIDIA_DRIVER_OK}" != "yes" ]]; then
     echo -e "${C_RED}[ERROR]${C_RESET} $(tr ERR_DRIVER_NOT_WORKING)"
     echo -e "  Install the driver as root: apt install -y nvidia-driver-550 (or via sudo if available)"
@@ -338,6 +350,7 @@ log_info "Driver: ${NVIDIA_DRIVER_VERSION:-not detected}"
 # Step 6: Detect CUDA compatibility
 # =============================================================================
 echo -e "${C_BOLD}[6/15] $(tr STAGE_CUDA)...${C_RESET}"
+show_progress 5 15
 detect_cuda_compat
 log_info "CUDA driver: ${CUDA_DRIVER_VERSION}, max supported: ${CUDA_MAX_SUPPORTED}"
 
@@ -345,6 +358,7 @@ log_info "CUDA driver: ${CUDA_DRIVER_VERSION}, max supported: ${CUDA_MAX_SUPPORT
 # Step 7: Detect CPU/RAM/disk/network
 # =============================================================================
 echo -e "${C_BOLD}[7/15] $(tr STAGE_RESOURCES)...${C_RESET}"
+show_progress 6 15
 detect_cpu
 detect_ram
 detect_disk
@@ -360,6 +374,7 @@ fi
 # Step 8: Detect Docker
 # =============================================================================
 echo -e "${C_BOLD}[8/15] $(tr STAGE_DOCKER)...${C_RESET}"
+show_progress 7 15
 # shellcheck source=scripts/setup_docker.sh
 source "${SCRIPT_DIR}/scripts/setup_docker.sh"
 detect_docker
@@ -376,6 +391,7 @@ log_info "Container environment: ${IS_DOCKER}"
 # Step 9: Detect persistent storage
 # =============================================================================
 echo -e "${C_BOLD}[9/15] $(tr STAGE_STORAGE)...${C_RESET}"
+show_progress 8 15
 # shellcheck source=scripts/setup_storage.sh
 source "${SCRIPT_DIR}/scripts/setup_storage.sh"
 detect_storage
@@ -398,6 +414,7 @@ echo ""
 echo -e "${C_YELLOW}${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
 echo -e "${C_YELLOW}${C_BOLD}  $(tr STAGE_CONFIRM)${C_RESET}"
 echo -e "${C_YELLOW}${C_BOLD}══════════════════════════════════════════════════════════${C_RESET}"
+show_progress 9 15
 echo ""
 echo "  $(tr CONFIRM_INSTALL_LIST)"
 echo "    - $(tr CONFIRM_ITEM_BASE_UTILS)"
@@ -427,6 +444,7 @@ fi
 # =============================================================================
 echo ""
 echo -e "${C_BOLD}[11/15] $(tr STAGE_BASE_UTILS)...${C_RESET}"
+show_progress 10 15
 # shellcheck source=scripts/setup_system.sh
 source "${SCRIPT_DIR}/scripts/setup_system.sh"
 install_base_packages
@@ -435,12 +453,14 @@ install_base_packages
 # Step 12: Create AI directory structure
 # =============================================================================
 echo -e "${C_BOLD}[12/15] $(tr STAGE_DIRS)...${C_RESET}"
+show_progress 11 15
 create_ai_directories
 
 # =============================================================================
 # Step 13: Configure storage (models/cache location)
 # =============================================================================
 echo -e "${C_BOLD}[13/15] $(tr STAGE_STORAGE_CFG)...${C_RESET}"
+show_progress 12 15
 ALLOW_STORAGE_PROMPT="${ALLOW_STORAGE_PROMPT:-no}"
 configure_model_storage
 
@@ -448,6 +468,7 @@ configure_model_storage
 # Step 14: Configure Python environment
 # =============================================================================
 echo -e "${C_BOLD}[14/15] $(tr STAGE_PYTHON)...${C_RESET}"
+show_progress 13 15
 # shellcheck source=scripts/setup_python.sh
 source "${SCRIPT_DIR}/scripts/setup_python.sh"
 run_python_setup
@@ -456,6 +477,7 @@ run_python_setup
 # Step 15: Configure runtimes (Ollama, vLLM, llama.cpp, HF, Docker)
 # =============================================================================
 echo -e "${C_BOLD}[15/15] $(tr STAGE_RUNTIMES)...${C_RESET}"
+show_progress 14 15
 
 # Hugging Face
 # shellcheck source=scripts/setup_huggingface.sh
@@ -494,6 +516,7 @@ run_routers_setup || log_warn "One or more AI routers failed to install/start (n
 # Write machine config report
 # =============================================================================
 echo -e "${C_BOLD}[final] Writing machine configuration...${C_RESET}"
+finish_progress
 write_machine_env
 
 # Add storage classification + runtime status to machine.env
