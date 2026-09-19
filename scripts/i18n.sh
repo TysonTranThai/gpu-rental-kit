@@ -148,6 +148,30 @@ i18n_init() {
 # associative arrays) so the same loader works on macOS dev machines.
 # -----------------------------------------------------------------------------
 tr() {
+    local first="${1:-}"
+    local nargs=$#
+    if [[ "${first}" == "--" ]]; then
+        first="${2:-}"
+        nargs=$((nargs - 1))
+    fi
+    # Coreutils call, not a translation key: the caller means the REAL
+    # /usr/bin/tr (e.g. `tr -d ' '`, `tr '|' '\n'`, `tr '[:upper:]' '[:lower:]'`).
+    # This function shadows the tr binary for every module sourced after
+    # i18n.sh (setup.sh, bootstrap.sh, ai-doctor). Returning the key here made
+    # the function exit WITHOUT reading stdin, so upstream pipeline writers
+    # (wc/echo/sort) got SIGPIPE (exit 141) under `set -Eeuo pipefail` —
+    # setup.sh died at detect_gpu.sh line 53 with "exit 141" in remote GPU
+    # mode. Delegate to the real binary, which reads stdin to EOF. Only shapes
+    # with >= 2 args and a non-identifier first arg are delegated (every real
+    # coreutils call in this repo); a single non-identifier arg still echoes
+    # the key below — the v1.4 selector contract (hostile input never crashes).
+    # Verified: no call site passes user data or an identifier-shaped first arg
+    # (e.g. `tr 'a' 'b'`), so coreutils behavior is fully restored and
+    # translation is unaffected.
+    if [[ "${nargs}" -ge 2 && ! "${first}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        command tr "$@"
+        return
+    fi
     local key="$1"
     shift
     # Seguridad: la clave debe ser un identificador Bash valido. Si el caller
