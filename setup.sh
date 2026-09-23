@@ -115,6 +115,46 @@ export I18N_LANG
 # =============================================================================
 # shellcheck source=scripts/progress.sh
 source "${SCRIPT_DIR}/scripts/progress.sh"
+# Start the elapsed-time clock shown next to the progress bar (e.g. "20% (1m 15s)")
+PROGRESS_START_EPOCH="$(date +%s)"
+export PROGRESS_START_EPOCH
+
+# =============================================================================
+# Model-setup mode — "automated" (wizard runs AFTER stage 15, so runtimes are
+# already installed) or "manual" (no prompts at the end). Resolved right after
+# the language choice so it is one continuous interactive moment, and persisted
+# to stack.env for reproducible launches via `ai-start --stack`.
+#   AI_MODEL_SETUP_MODE=automated|manual   pre-answer the prompt
+#   AUTO_CONFIRM=yes (or --remote-gpu)     defaults to manual
+# =============================================================================
+MODEL_SETUP_MODE=""
+if [[ -n "${AI_MODEL_SETUP_MODE:-}" ]]; then
+    case "${AI_MODEL_SETUP_MODE}" in
+        automated|auto) MODEL_SETUP_MODE="automated" ;;
+        manual)         MODEL_SETUP_MODE="manual" ;;
+    esac
+fi
+if [[ -z "${MODEL_SETUP_MODE}" && "${AUTO_CONFIRM:-no}" != "yes" && "${REMOTE_MODE}" != "yes" ]]; then
+    echo ""
+    echo "  $(tr MODEL_SETUP_MODE_TITLE)"
+    echo "  1) $(tr MODEL_SETUP_MODE_AUTOMATED)"
+    echo "  2) $(tr MODEL_SETUP_MODE_AUTOMATED_DESC)"
+    echo "  3) $(tr MODEL_SETUP_MODE_MANUAL)"
+    echo "  4) $(tr MODEL_SETUP_MODE_MANUAL_DESC)"
+    echo ""
+    local_mode_choice=""
+    while true; do
+        printf "  $(tr MODEL_SETUP_MODE_PROMPT) "
+        read -r local_mode_choice || local_mode_choice=""
+        case "${local_mode_choice}" in
+            1|a|A) MODEL_SETUP_MODE="automated"; break ;;
+            2|m|M) MODEL_SETUP_MODE="manual"; break ;;
+            *) echo "  $(tr MODEL_SETUP_MODE_INVALID)" ;;
+        esac
+    done
+fi
+[[ -z "${MODEL_SETUP_MODE}" ]] && MODEL_SETUP_MODE="manual"
+export MODEL_SETUP_MODE
 
 # =============================================================================
 # Error handler
@@ -149,7 +189,8 @@ write_machine_report() {
         fi
     fi
 
-    local docker_status="Docker CLI: $([[ "${HAS_DOCKER:-no}" == "yes" ]] && echo yes || echo no), daemon: $([[ "${HAS_DOCKER:-no}" == "yes" ]] && echo reachable || echo not-reachable), container env: ${IS_DOCKER:-no}"
+    local docker_status
+    docker_status="Docker CLI: $([[ "${HAS_DOCKER:-no}" == "yes" ]] && echo yes || echo no), daemon: $([[ "${HAS_DOCKER:-no}" == "yes" ]] && echo reachable || echo not-reachable), container env: ${IS_DOCKER:-no}"
     local nctk_status="not installed"
     if command -v nvidia-container-toolkit &>/dev/null || command -v nvidia-ctk &>/dev/null; then
         nctk_status="installed"
@@ -507,7 +548,12 @@ install_docker
 install_nvidia_container_toolkit
 verify_docker_gpu
 
-# AI Routers (9Router + OmniRoute, optional; failures warn but don't abort)
+# =============================================================================
+# AI Routers (9Router + OmniRoute, optional; failures warn but don't abort).
+# Both routers are installed, updated to the latest npm release, started in
+# the background, health-verified, and set up to survive SSH logout/reboot
+# (systemd where available, nohup otherwise).
+# =============================================================================
 # shellcheck source=scripts/setup_routers.sh
 source "${SCRIPT_DIR}/scripts/setup_routers.sh"
 run_routers_setup || log_warn "One or more AI routers failed to install/start (non-fatal)."
@@ -623,6 +669,23 @@ tar -xzf ai-backup-*.tar.gz
 REBUILD
 
 log_info "Rebuild instructions written to ${AI_HOME}/REBUILD.md"
+
+# =============================================================================
+# Model setup — the core ask: right after the language choice the user picked
+# automated vs manual; automated drops into the model assistant here, when
+# every runtime is already installed. Manual skips straight to the summary.
+# =============================================================================
+if [[ "${MODEL_SETUP_MODE}" == "automated" ]]; then
+    # shellcheck source=scripts/wizard.sh
+    source "${SCRIPT_DIR}/scripts/wizard.sh"
+    run_model_setup_assistant || log_warn "Model setup did not complete — you can configure it later."
+else
+    echo ""
+    echo -e "  ${C_BOLD}$(tr MODEL_SETUP_MANUAL_HINT_TITLE)${C_RESET}"
+    echo -e "    ${C_CYAN}model-download <model>${C_RESET}    $(tr MODEL_SETUP_MANUAL_HINT_DOWNLOAD)"
+    echo -e "    ${C_CYAN}ai-start ollama <model>${C_RESET}  $(tr MODEL_SETUP_MANUAL_HINT_START)"
+    echo -e "    ${C_CYAN}./bootstrap.sh --configure${C_RESET}  $(tr MODEL_SETUP_MANUAL_HINT_WIZARD)"
+fi
 
 # =============================================================================
 # Final summary

@@ -16,6 +16,8 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/helpers.sh"
 
 # shellcheck source=/dev/null
 source "${KIT_ROOT}/scripts/progress.sh"
+# A developer shell must never leak a clock into these assertions.
+unset PROGRESS_START_EPOCH || true
 
 # --- 1. ASCII rendering (non-TTY fallback) ------------------------------------
 out="$(show_progress 0 15)"
@@ -49,6 +51,30 @@ assert_eq "  [########################] 100%" "${out}" "total 0 sanitizes to 1, 
 out="$(finish_progress)"
 assert_eq "  [########################] 100%" "${out}" "finish_progress renders the 100% bar"
 
+# --- 5b. Elapsed-time clock (PROGRESS_START_EPOCH) ------------------------------
+# No clock set: bars render without any suffix.
+out="$(show_progress 5 15)"
+assert_ok "unset clock renders no suffix" bash -c '[[ "${1}" != *"("* ]]' _ "${out}"
+
+# Invalid / hostile clock values degrade to no suffix, never a crash.
+for bad in banana '' 2026-09-19 "1e9"; do
+    out="$(PROGRESS_START_EPOCH="${bad}" show_progress 5 15)"
+    assert_ok "clock '${bad}' renders no suffix" bash -c '[[ "${1}" != *"("* ]]' _ "${out}"
+done
+
+# Backwards clock step (NTP): no suffix.
+out="$(PROGRESS_START_EPOCH="$(($(date +%s) + 500))" show_progress 5 15)"
+assert_ok "future epoch (clock stepped back) renders no suffix" bash -c '[[ "${1}" != *"("* ]]' _ "${out}"
+
+# ~130s elapsed renders a (2m NNs) suffix; ±1s second-boundary race tolerated.
+out="$(PROGRESS_START_EPOCH="$(($(date +%s) - 130))" show_progress 3 15)"
+assert_ok "130s elapsed renders a (2m NNs) suffix" bash -c '[[ "${1}" =~ \ \(2m\ [0-9][0-9]s\)$ ]]' _ "${out}"
+assert_contains "${out}" "20% (2m" "elapsed suffix follows the percentage"
+
+# ~3723s elapsed renders (1h 02m NNs).
+out="$(PROGRESS_START_EPOCH="$(($(date +%s) - 3723))" show_progress 5 15)"
+assert_ok "3723s elapsed renders a (1h 02m NNs) suffix" bash -c '[[ "${1}" =~ \ \(1h\ 02m\ [0-9][0-9]s\)$ ]]' _ "${out}"
+
 # --- 6. setup.sh wiring: bar under every stage header --------------------------
 n="$(grep -cE '^show_progress [0-9]+ 15$' "${KIT_ROOT}/setup.sh")"
 assert_eq "15" "${n}" "setup.sh calls show_progress under all 15 stage headers"
@@ -72,6 +98,7 @@ fi
 
 assert_ok "setup.sh calls finish_progress after the final stage" grep -q "finish_progress" "${KIT_ROOT}/setup.sh"
 assert_ok "setup.sh sources scripts/progress.sh" grep -q 'scripts/progress.sh' "${KIT_ROOT}/setup.sh"
+assert_ok "setup.sh starts the elapsed clock (PROGRESS_START_EPOCH)" grep -q 'PROGRESS_START_EPOCH="\$(date +%s)"' "${KIT_ROOT}/setup.sh"
 
 # --- 7. tr-shadow safety: progress.sh must not define or call tr ---------------
 assert_fail "progress.sh contains no tr call (tr-shadow rule)" grep -E '(^|[^a-zA-Z_])tr[[:space:]]' "${KIT_ROOT}/scripts/progress.sh"

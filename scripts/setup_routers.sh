@@ -156,8 +156,15 @@ ensure_node() {
         return 1
     fi
 
-    curl -fsSL https://deb.nodesource.com/setup_22.x | ${SUDO:-} -E bash - \
-        || { echo "  [ERROR] NodeSource setup failed."; return 1; }
+    # Preferred: NodeSource (pins Node 22 LTS). Fallback: distro repo (Ubuntu
+    # 22.04 ships Node 12 — too old alone, but keeps a `node` present so the
+    # error below is actionable instead of a missing-command crash).
+    if ! curl -fsSL https://deb.nodesource.com/setup_22.x | ${SUDO:-} -E bash -; then
+        echo "  [WARN] NodeSource setup failed — trying the distro repository..."
+        ${SUDO:-} apt-get update -y >/dev/null 2>&1 || true
+        ${SUDO:-} apt-get install -y nodejs npm \
+            || { echo "  [ERROR] nodejs install failed (both NodeSource and distro)."; return 1; }
+    fi
     ${SUDO:-} apt-get install -y nodejs \
         || { echo "  [ERROR] nodejs install failed."; return 1; }
 
@@ -197,6 +204,126 @@ install_npm_router() {
 
     [[ -x "${prefix}/bin/${bin_name}" ]] || { echo "  [ERROR] ${bin_name} binary not found after install."; return 1; }
     echo "  $(tr ROUTER_INSTALLED "${pkg}" "$("${prefix}/bin/${bin_name}" --version 2>/dev/null | head -1 || echo '?')")"
+}
+
+# -----------------------------------------------------------------------------
+# update_npm_router PKG BIN_NAME — keep an installed router current with the
+# upstream repo. Compares the installed version against the npm registry
+# (`@latest`) and reinstalls only when they differ. Never fails the run:
+#   * not installed yet  → no-op (install_npm_router handles the fresh install)
+#   * registry unreachable → keep the working version (offline-safe)
+#   * update fails       → warn and keep the old binary
+# -----------------------------------------------------------------------------
+update_npm_router() {
+    local pkg="$1" bin_name="$2"
+    local prefix; prefix="$(npm_global_prefix)"
+    [[ -x "${prefix}/bin/${bin_name}" ]] || return 0
+
+    local latest="" inst=""
+    latest="$(npm view "${pkg}" version 2>/dev/null | tr -d '[:space:]' || true)"
+    inst="$("${prefix}/bin/${bin_name}" --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)*' | head -1 || true)"
+    if [[ -z "${latest}" ]]; then
+        echo "  ${bin_name}: version check skipped (npm registry unreachable)."
+        return 0
+    fi
+    if [[ -z "${inst}" || "${inst}" != "${latest}" ]]; then
+        echo "  $(tr ROUTER_UPDATING "${pkg}")"
+        if npm install -g --prefix "${prefix}" "${pkg}@latest" >/dev/null 2>&1; then
+            echo "  ✓ ${bin_name} updated to $("${prefix}/bin/${bin_name}" --version 2>/dev/null | head -1 || echo '?')."
+        else
+            echo "  [WARN] npm update ${pkg} failed — keeping installed version $("${prefix}/bin/${bin_name}" --version 2>/dev/null | head -1 || echo '?')."
+        fi
+    else
+        echo "  ${bin_name} is up to date (v${latest})."
+    fi
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# write_router_systemd_unit NAME BIN_PATH PORT LOGFILE — user-level systemd
+# unit (`systemd --user`) so the routers survive SSH logout. Root fallback:
+# a system-level unit in /etc/systemd/system. No-op when systemd is absent
+# (Docker containers) — nohup keeps those running for the session.
+# -----------------------------------------------------------------------------
+write_router_systemd_unit() {
+    local name="$1" bin="$2" port="$3" logfile="$4"
+    command -v systemctl >/dev/null 2>&1 || return 1
+    [[ -x "${bin}" ]] || return 1
+
+    local unit_content
+    unit_content="[Unit]
+Description=GPU Rental Kit — ${name} (OpenAI-compatible gateway)
+After=network.target
+
+[Service]
+Environment=PORT=${port}
+Environment=HOSTNAME=${ROUTER_BIND_ADDRESS}
+ExecStart=${bin}
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:${logfile}
+StandardError=append:${logfile}
+
+[Install]
+WantedBy=default.target
+"
+
+    if [[ "$(id -u)" -eq 0 && -d /run/systemd/system ]]; then
+        # System manager available (rental VM / bare metal): real boot persistence.
+        echo "${unit_content}" > "/etc/systemd/system/gpu-kit-${name}.service" || return 1
+        systemctl daemon-reload >/dev/null 2>&1 || true
+        systemctl enable "gpu-kit-${name}.service" >/dev/null 2>&1 || true
+        return 0
+    fi
+
+    # Rootless: user unit (survives logout; boot start needs loginctl enable-linger).
+    local unit_dir="${HOME}/.config/systemd/user"
+    mkdir -p "${unit_dir}" 2>/dev/null || return 1
+    echo "${unit_content}" > "${unit_dir}/gpu-kit-${name}.service" || return 1
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    systemctl --user enable "gpu-kit-${name}.service" >/dev/null 2>&1 || true
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# enable_router_persistence — best-effort boot persistence for both routers.
+# Already-running setups keep running: the unit is enabled alongside the
+# nohup process, and systemd takes over on the next boot.
+# -----------------------------------------------------------------------------
+enable_router_persistence() {
+    local prefix; prefix="$(npm_global_prefix)"
+    local persisted=0
+    if [[ "${ROUTER_9ROUTER_ENABLED}" == "yes" && -x "${prefix}/bin/9router" ]]; then
+        write_router_systemd_unit "9router" "${prefix}/bin/9router" "${ROUTER_9ROUTER_PORT}" "${ROUTER_LOG_DIR}/9router.log" && persisted=1
+    fi
+    if [[ "${ROUTER_OMNIROUTE_ENABLED}" == "yes" && -x "${prefix}/bin/omniroute" ]]; then
+        write_router_systemd_unit "omniroute" "${prefix}/bin/omniroute" "${ROUTER_OMNIROUTE_PORT}" "${ROUTER_LOG_DIR}/omniroute.log" && persisted=1
+    fi
+    if [[ "${persisted}" -eq 1 ]]; then
+        echo "  $(tr ROUTER_PERSIST_OK)"
+    else
+        echo "  $(tr ROUTER_PERSIST_SKIP)"
+    fi
+    return 0
+}
+
+# -----------------------------------------------------------------------------
+# export_router_npm_prefix — put the router binaries on PATH for future shells
+# (npm installs with a custom --prefix, so plain `9router` is not found by
+# default). Adds one PATH line to ~/.bashrc guarded by the prefix path.
+# -----------------------------------------------------------------------------
+export_router_npm_prefix() {
+    local prefix; prefix="$(npm_global_prefix)"
+    mkdir -p "${prefix}/bin" 2>/dev/null || true
+    if [[ -d "${HOME}" ]] && ! grep -qF "${prefix}/bin" "${HOME}/.bashrc" 2>/dev/null; then
+        {
+            echo ""
+            echo "# GPU Rental Kit — AI routers (9Router / OmniRoute)"
+            echo "export PATH=\"${prefix}/bin:\$PATH\""
+        } >> "${HOME}/.bashrc" 2>/dev/null || true
+    fi
+    export ROUTER_NPM_PREFIX="${prefix}"
+    return 0
 }
 
 # -----------------------------------------------------------------------------
@@ -251,6 +378,9 @@ run_routers_setup() {
     # --- 9Router ---
     if [[ "${ROUTER_9ROUTER_ENABLED}" == "yes" ]]; then
         echo "  ── 9Router ──"
+        # Keep parity with the upstream repo: update in place when a newer
+        # release exists, then guarantee the binary is present.
+        update_npm_router "9router" "9router"
         if install_npm_router "9router" "9router"; then
             if resolve_router_port "${ROUTER_9ROUTER_PORT}" "9Router"; then
                 ROUTER_9ROUTER_PORT="${ROUTER_PORT_CHOSEN}"
@@ -285,6 +415,7 @@ run_routers_setup() {
     # --- OmniRoute ---
     if [[ "${ROUTER_OMNIROUTE_ENABLED}" == "yes" ]]; then
         echo "  ── OmniRoute ──"
+        update_npm_router "omniroute" "omniroute"
         if install_npm_router "omniroute" "omniroute"; then
             if resolve_router_port "${ROUTER_OMNIROUTE_PORT}" "OmniRoute"; then
                 ROUTER_OMNIROUTE_PORT="${ROUTER_PORT_CHOSEN}"
@@ -315,6 +446,11 @@ run_routers_setup() {
         ROUTER_OMNIROUTE_STATUS="disabled"
         echo "  $(tr ROUTER_SKIP_BY_CONFIG "OmniRoute")"
     fi
+
+    # Persist across SSH logout / reboots (systemd when available, nohup
+    # otherwise) and expose the binaries on PATH for future shells.
+    enable_router_persistence
+    export_router_npm_prefix
 
     export ROUTER_9ROUTER_STATUS ROUTER_OMNIROUTE_STATUS
     export ROUTER_9ROUTER_PORT ROUTER_OMNIROUTE_PORT

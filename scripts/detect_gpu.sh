@@ -51,10 +51,22 @@ detect_nvidia_gpu() {
         if nvidia-smi -L &>/dev/null 2>&1; then
             HAS_NVIDIA_GPU="yes"
             GPU_COUNT="$(nvidia-smi -L 2>/dev/null | wc -l | tr -d ' ')"
-            GPU_NAME="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo "unknown")"
-            GPU_VRAM_MB="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -1 | sed 's/ MiB//' || echo "0")"
+            # Read nvidia-smi output to EOF (awk), never `| head -1`: on
+            # multi-GPU boxes head exits after line 1 while nvidia-smi is
+            # still writing, SIGPIPE-killing it under `set -o pipefail` —
+            # the same 141 class as the i18n tr() shadow (fixed in v1.5.1).
+            # The old `|| echo unknown` fallback then masked the failure and
+            # reported the GPU name as "unknown" at random.
+            local nvidia_names nvidia_vram nvidia_drv
+            nvidia_names="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || true)"
+            nvidia_vram="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null || true)"
+            nvidia_drv="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || true)"
+            GPU_NAME="$(printf '%s\n' "${nvidia_names}" | awk 'NR==1')"
+            GPU_VRAM_MB="$(printf '%s\n' "${nvidia_vram}" | awk 'NR==1' | sed 's/ MiB//')"
+            NVIDIA_DRIVER_VERSION="$(printf '%s\n' "${nvidia_drv}" | awk 'NR==1')"
+            [[ -z "${GPU_NAME}" ]] && GPU_NAME="unknown"
+            [[ -z "${GPU_VRAM_MB}" ]] && GPU_VRAM_MB=0
             GPU_VRAM_GB="$(awk "BEGIN {printf \"%.0f\", ${GPU_VRAM_MB}/1024}")"
-            NVIDIA_DRIVER_VERSION="$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || echo "")"
             NVIDIA_DRIVER_OK="yes"
             export GPU_COUNT GPU_NAME GPU_VRAM_MB GPU_VRAM_GB NVIDIA_DRIVER_VERSION NVIDIA_DRIVER_OK HAS_NVIDIA_GPU
             return 0
@@ -139,7 +151,8 @@ detect_cuda_compat() {
 # (nvidia-smi does not expose compute capability; use PyTorch for exact CC.)
 # =============================================================================
 gpu_arch_for_name() {
-    local gpu_name="$(echo "$1" | tr '[:upper:]' '[:lower:]')"
+    local gpu_name
+    gpu_name="$(printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]')"
 
     if echo "${gpu_name}" | grep -qE 'rtx 50'; then
         echo "Blackwell|12.x"

@@ -351,7 +351,8 @@ except Exception as e:
 PYEOF
 )" 2>/dev/null || true
 
-    local first="$(printf '%s' "${result}" | head -1)"
+    local first
+    first="$(printf '%s' "${result}" | awk 'NR==1')"
     case "${first}" in
         BENCH*)
             echo -e "  ${C_GREEN}[BENCH]${C_RESET} ${first#BENCH|}"

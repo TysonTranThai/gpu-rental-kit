@@ -20,6 +20,26 @@
 if [[ -z "${_GPU_RENTAL_KIT_WIZARD_LOADED:-}" ]]; then
 _GPU_RENTAL_KIT_WIZARD_LOADED="1"
 
+# Self-locate the repo's scripts/ directory. setup.sh sources this file, but
+# the variable it historically relied on (${_GPU_KIT_SCRIPT_DIR}) was never
+# exported by any caller — under `set -u` the wizard crashed on first use
+# (unbound variable). Every consumer below uses WIZARD_SCRIPT_DIR.
+_GPU_KIT_SCRIPT_DIR="${_GPU_KIT_SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+WIZARD_SCRIPT_DIR="${_GPU_KIT_SCRIPT_DIR}"
+
+# Lazy module loading: setup.sh only sources modules it needs for the fixed
+# 15-stage flow, so the wizard must pull in whatever a chosen step requires.
+# Sourcing here (not at the top) keeps `--wizard` startup fast and avoids
+# loading installers the user never picks.
+wizard_require() {
+    case "$1" in
+        runtime-ollama)   [[ -n "${_GPU_RENTAL_KIT_OLLAMA_LOADED:-}" ]] || source "${WIZARD_SCRIPT_DIR}/setup_ollama.sh" ;;
+        runtime-vllm)     [[ -n "${_GPU_RENTAL_KIT_VLLM_LOADED:-}" ]]   || source "${WIZARD_SCRIPT_DIR}/setup_vllm.sh" ;;
+        runtime-llamacpp) [[ -n "${_GPU_RENTAL_KIT_LLAMACPP_LOADED:-}" ]] || source "${WIZARD_SCRIPT_DIR}/setup_llamacpp.sh" ;;
+        routers)          [[ -n "${_GPU_RENTAL_KIT_ROUTERS_LOADED:-}" ]] || source "${WIZARD_SCRIPT_DIR}/setup_routers.sh" ;;
+    esac
+}
+
 WIZARD_AI_HOME="${AI_HOME:-${HOME}/ai}"
 WIZARD_STACK_ENV="${WIZARD_STACK_ENV:-${WIZARD_AI_HOME}/config/stack.env}"
 WIZARD_MODELS_YAML="${WIZARD_MODELS_YAML:-}"
@@ -173,9 +193,9 @@ wizard_runtime_install() {
     fi
     echo "  $(tr WIZARD_RUNTIME_INSTALLING "${runtime}")"
     case "${runtime}" in
-        ollama)   run_ollama_setup ;;
-        llamacpp) run_llamacpp_setup ;;
-        vllm)     run_vllm_setup ;;
+        ollama)   wizard_require runtime-ollama;   run_ollama_setup ;;
+        llamacpp) wizard_require runtime-llamacpp; run_llamacpp_setup ;;
+        vllm)     wizard_require runtime-vllm;     run_vllm_setup ;;
     esac
 }
 
@@ -324,11 +344,13 @@ wizard_gateway_install() {
             WIZARD_GATEWAY_PORT="${WIZARD_RUNTIME_PORT}"
             ;;
         9router)
+            wizard_require routers
             ROUTER_9ROUTER_ENABLED="yes"; ROUTER_OMNIROUTE_ENABLED="no"
             run_routers_setup
             WIZARD_GATEWAY_PORT="${ROUTER_9ROUTER_PORT}"
             ;;
         omniroute)
+            wizard_require routers
             ROUTER_9ROUTER_ENABLED="no"; ROUTER_OMNIROUTE_ENABLED="yes"
             run_routers_setup
             WIZARD_GATEWAY_PORT="${ROUTER_OMNIROUTE_PORT}"
@@ -402,12 +424,12 @@ wizard_ssh_tunnel_hint() {
 wizard_persist() {
     wizard_stack_set "LANGUAGE" "$(i18n_lang 2>/dev/null || echo en)"
     wizard_stack_set "RUNTIME" "${WIZARD_RUNTIME}"
-    [[ -n "${WIZARD_SELECTED_MODEL}" ]] && wizard_stack_set "MODEL" "${WIZARD_SELECTED_MODEL}"
-    [[ -n "${WIZARD_GPU_IDS}" ]] && wizard_stack_set "GPU_IDS" "${WIZARD_GPU_IDS}"
+    [[ -n "${WIZARD_SELECTED_MODEL:-}" ]] && wizard_stack_set "MODEL" "${WIZARD_SELECTED_MODEL}"
+    [[ -n "${WIZARD_GPU_IDS:-}" ]] && wizard_stack_set "GPU_IDS" "${WIZARD_GPU_IDS}"
     wizard_stack_set "GATEWAY" "${WIZARD_GATEWAY}"
     wizard_stack_set "PORT" "${WIZARD_GATEWAY_PORT}"
     wizard_stack_set "BIND_ADDRESS" "${WIZARD_BIND}"
-    [[ -n "${WIZARD_DOMAIN}" ]] && wizard_stack_set "DOMAIN" "${WIZARD_DOMAIN}"
+    [[ -n "${WIZARD_DOMAIN:-}" ]] && wizard_stack_set "DOMAIN" "${WIZARD_DOMAIN}"
     echo "  $(tr WIZARD_STACK_SAVED "${WIZARD_STACK_ENV}")"
     echo "  $(tr WIZARD_STACK_LAUNCH_HINT)"
 }
@@ -415,13 +437,121 @@ wizard_persist() {
 wizard_final_summary() {
     wizard_header "$(tr WIZARD_FINAL_TITLE)"
     echo "  $(tr WIZARD_FINAL_RUNTIME): ${WIZARD_RUNTIME}"
-    [[ -n "${WIZARD_SELECTED_MODEL}" ]] && echo "  $(tr WIZARD_FINAL_MODEL): ${WIZARD_SELECTED_MODEL}"
+    [[ -n "${WIZARD_SELECTED_MODEL:-}" ]] && echo "  $(tr WIZARD_FINAL_MODEL): ${WIZARD_SELECTED_MODEL}"
     echo "  $(tr WIZARD_FINAL_GATEWAY): ${WIZARD_GATEWAY}"
     echo "  $(tr WIZARD_FINAL_ENDPOINT): http://${WIZARD_BIND}:${WIZARD_GATEWAY_PORT}/v1"
-    [[ -n "${WIZARD_DOMAIN}" ]] && echo "  $(tr WIZARD_FINAL_DOMAIN): https://${WIZARD_DOMAIN}/v1"
+    [[ -n "${WIZARD_DOMAIN:-}" ]] && echo "  $(tr WIZARD_FINAL_DOMAIN): https://${WIZARD_DOMAIN}/v1"
     wizard_ssh_tunnel_hint
     echo ""
     wizard_persist
+}
+
+# =============================================================================
+# model setup assistant — post-install model chooser (automated mode)
+#
+# setup.sh asks "automated or manual?" right after the language pick. When the
+# user chooses automated, the assistant runs at the END of setup (all runtimes
+# already installed): pick a runtime → pick/download a model → optionally
+# launch it in the background. Choices persist to stack.env so
+# `ai-start --stack` can relaunch the exact same stack later.
+# =============================================================================
+assistant_require_runtime() {
+    case "$1" in
+        ollama)   wizard_require runtime-ollama;   run_ollama_setup ;;
+        llamacpp) wizard_require runtime-llamacpp; run_llamacpp_setup ;;
+        vllm)     wizard_require runtime-vllm;     run_vllm_setup ;;
+    esac
+}
+
+assistant_start_model() {
+    # Background-launch the model (never exec): setup must stay in control and
+    # print its final summary. Mirrors ai-start's launch commands minus exec.
+    local runtime="$1" model="$2"
+    local logs_dir="${AI_LOGS_DIR:-${AI_HOME}/logs}"
+    local log_file="${logs_dir}/${runtime}-model.log"
+    local port
+    port="$("${WIZARD_SCRIPT_DIR}/../config/runtime_port.sh" "${runtime}" 2>/dev/null || echo "")"
+    case "${runtime}" in
+        ollama)
+            command -v ollama >/dev/null 2>&1 || return 1
+            if ! pgrep -f "ollama serve" >/dev/null 2>&1; then
+                nohup ollama serve >> "${logs_dir}/ollama.log" 2>&1 &
+                sleep 2
+            fi
+            ;;
+        vllm)
+            [[ -x "${AI_HOME}/bin/vllm-serve" ]] || return 1
+            nohup "${AI_HOME}/bin/vllm-serve" "${model}" >> "${log_file}" 2>&1 &
+            ;;
+        llamacpp)
+            [[ -x "${AI_HOME}/bin/llamacpp-serve" ]] || return 1
+            nohup "${AI_HOME}/bin/llamacpp-serve" "${model}" >> "${log_file}" 2>&1 &
+            ;;
+        *) return 1 ;;
+    esac
+    echo "  ✓ $(tr ASSISTANT_MODEL_STARTED "${model}")"
+    [[ -n "${port}" ]] && echo "  $(tr ASSISTANT_ENDPOINT "http://127.0.0.1:${port}/v1")"
+    echo "  $(tr ASSISTANT_LOG_HINT "${log_file}")"
+    return 0
+}
+
+run_model_setup_assistant() {
+    local model=""
+    wizard_header "$(tr ASSISTANT_TITLE)"
+
+    # Runtime choice — same menu as the wizard, hardware-aware recommendation.
+    wizard_runtime_menu
+    local rec; rec="$(wizard_runtime_recommend)"
+    echo "  $(tr WIZARD_RUNTIME_RECOMMEND_HINT "${rec}")"
+    local choice
+    choice="$(wizard_ask_choice "$(tr WIZARD_RUNTIME_CHOICE_PROMPT)" "4")"
+    case "${choice}" in
+        1) ASSISTANT_RUNTIME="ollama" ;;
+        2) ASSISTANT_RUNTIME="llamacpp" ;;
+        3) ASSISTANT_RUNTIME="vllm" ;;
+        4) ASSISTANT_RUNTIME="${rec}" ;;
+    esac
+    echo ""
+
+    # Ensure the runtime exists (no-op after stage 15; recovery path if the
+    # runtime's stage-15 install failed).
+    assistant_require_runtime "${ASSISTANT_RUNTIME}" || true
+
+    # Model choice + download (wizard_model_menu handles registry, VRAM fit,
+    # manual entry, and skip).
+    if wizard_model_menu "${ASSISTANT_RUNTIME}"; then
+        model="${WIZARD_SELECTED_MODEL}"
+    fi
+
+    # Persist so `ai-start --stack` relaunches exactly this stack later.
+    wizard_stack_set "MODEL_SETUP_MODE" "automated"
+    wizard_stack_set "RUNTIME" "${ASSISTANT_RUNTIME}"
+    wizard_stack_set "GATEWAY" "integrated"
+    wizard_stack_set "BIND_ADDRESS" "127.0.0.1"
+    local rt_port
+    rt_port="$("${WIZARD_SCRIPT_DIR}/../config/runtime_port.sh" "${ASSISTANT_RUNTIME}" 2>/dev/null || echo "")"
+    [[ -n "${rt_port}" ]] && wizard_stack_set "PORT" "${rt_port}"
+    [[ -n "${model}" ]] && wizard_stack_set "MODEL" "${model}"
+
+    # Optional immediate launch
+    wizard_header "$(tr ASSISTANT_DONE_TITLE)"
+    if [[ -n "${model}" ]]; then
+        echo "  $(tr WIZARD_FINAL_RUNTIME): ${ASSISTANT_RUNTIME}"
+        echo "  $(tr WIZARD_FINAL_MODEL): ${model}"
+        echo ""
+        echo "  $(tr ASSISTANT_START_NOW_PROMPT)"
+        if wizard_ask_yes_no "$(tr ASSISTANT_START_NOW)"; then
+            if ! assistant_start_model "${ASSISTANT_RUNTIME}" "${model}"; then
+                echo "  $(tr ASSISTANT_START_LATER "ai-start ${ASSISTANT_RUNTIME} ${model}")"
+            fi
+        else
+            echo "  $(tr ASSISTANT_START_LATER "ai-start ${ASSISTANT_RUNTIME} ${model}")"
+        fi
+    else
+        echo "  $(tr ASSISTANT_NO_MODEL_LATER)"
+    fi
+    echo ""
+    return 0
 }
 
 # =============================================================================

@@ -34,7 +34,8 @@ install_base_packages() {
             curl wget git build-essential \
             htop tmux jq python3 python3-pip python3-venv \
             ca-certificates gnupg lsb-release \
-            pciutils nvtop 2>/dev/null || true
+            pciutils nvtop \
+            procps lsof net-tools 2>/dev/null || true
 
         # Ensure python3 → python
         if ! command -v python &>/dev/null && command -v python3 &>/dev/null; then
@@ -44,11 +45,11 @@ install_base_packages() {
         echo -e "${C_GREEN}[OK]${C_RESET} Base packages installed."
 
     elif command -v dnf &>/dev/null; then
-        ${SUDO} dnf install -y curl wget git htop tmux jq python3 python3-pip pciutils 2>/dev/null || true
+        ${SUDO} dnf install -y curl wget git htop tmux jq python3 python3-pip pciutils procps lsof 2>/dev/null || true
         echo -e "${C_GREEN}[OK]${C_RESET} Base packages installed (dnf)."
 
     elif command -v yum &>/dev/null; then
-        ${SUDO} yum install -y curl wget git htop tmux jq python3 python3-pip pciutils 2>/dev/null || true
+        ${SUDO} yum install -y curl wget git htop tmux jq python3 python3-pip pciutils procps lsof 2>/dev/null || true
         echo -e "${C_GREEN}[OK]${C_RESET} Base packages installed (yum)."
 
     else
